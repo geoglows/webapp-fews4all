@@ -218,7 +218,15 @@ def build_streams(basin_sevs, basin_ids, tree):
             "properties": {
                 "HYRIV_ID": hid,
                 "severity": e["sev"],
+                # basins: every flagged basin this reach belongs to (physical
+                # membership OR downstream of), used to show it for a selection.
                 "basins": sorted(e["basins"]),
+                # in_basins: only the basin(s) this reach physically sits inside.
+                # Empty for pure downstream-trace reaches. Lets the front end tell,
+                # per selected basin, the in-basin channel from the downstream trace
+                # (the global `reach` label can't, since a reach may be a seed for
+                # one basin while being downstream of another).
+                "in_basins": sorted(seed_basins.get(hid, ())),
                 "reach": "in_basin" if e["seed"] else "downstream",
                 "ord": seed_ord.get(hid) or ds_ord.get(hid) or 1,  # Strahler order (LOD)
             },

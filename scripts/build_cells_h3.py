@@ -24,7 +24,7 @@ PUBLIC = os.path.join(ROOT, "public")   # the app reads its data from here
 os.makedirs(PUBLIC, exist_ok=True)
 OUTPUT = os.path.join(PUBLIC, "data_h3cells.geojson")
 
-GEOGLOWS_CSV = os.path.join(FILES, "Geoglows_2026-07-13-00.csv")
+GEOGLOWS_CSV = os.path.join(FILES, "Geoglows_2026-08-19-12.csv")
 FLOOD_HUB_CSV = os.path.join(FILES, "Flood_Hub_Global.csv")
 
 # GEOGLOWS has no severity label, only a return period (years); below 2-year is not
@@ -102,7 +102,8 @@ def read_flood_hub_points(path):
                 "lat": lat, "lon": lon,
                 "riverId": (r.get("gaugeId") or "").strip(),
                 "country": (r.get("queriedCountryName") or "").strip(),
-                "returnPeriodYr": "", "peakDischargeCms": "",
+                "returnPeriodYr": (r.get("returnPeriodYr") or "").strip(),
+                "peakDischargeCms": (r.get("dischargePeak_m3s") or r.get("discharge") or "").strip(),
                 "issuedTime": (r.get("issuedTime") or "").strip(),
                 "startTime": (r.get("forecastTimeRange.start") or "").strip(),
                 "peakTime": "",

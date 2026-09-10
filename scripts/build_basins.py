@@ -28,12 +28,18 @@ PUBLIC = os.path.join(ROOT, "public")   # the app reads its data from here
 os.makedirs(PUBLIC, exist_ok=True)
 
 MATCHES_CSV = os.path.join(FILES, "global_matches.csv")
-GEOGLOWS_CSV = os.path.join(FILES, "Geoglows_2026-07-13-00.csv")
+GEOGLOWS_CSV = os.path.join(FILES, "Geoglows_2026-08-19-12.csv")
 FLOOD_HUB_CSV = os.path.join(FILES, "Flood_Hub_Global.csv")
 BASINS_DIR = os.path.join(FILES, "Basins")
 IMPACT_DIR = os.path.join(FILES, "Impact")
 HUC12_PARQUET = os.path.join(BASINS_DIR, "HUC12.parquet")
 OUTPUT = os.path.join(PUBLIC, "data_basins.geojson")
+
+# geoBoundaries ADM2 (districts): each forecast point is placed in the district
+# it physically sits in, giving a specific location instead of a whole-basin one.
+BOUNDARIES = os.path.join(FILES, "International_boundaries")
+ADM2_GPKG = "geoBoundariesCGAZ_ADM2.gpkg"
+ADMIN_READ_BATCH = 4000   # polygons per streamed read (keeps memory flat)
 
 # Impact stats are measured per HUC12 basin; each file is HYBAS_ID + value
 # column(s), with a TOTAL row we skip. (file, {csv column: impact field})
@@ -166,8 +172,10 @@ def load_flood_hub(path):
                 "startTime": (r.get("forecastTimeRange.start") or "").strip(),
                 "peakTime": "",
                 "endTime": (r.get("forecastTimeRange.end") or "").strip(),
-                "returnPeriodYr": "",
-                "peakDischargeCms": "",
+                # From the Flood Hub downloader's discharge/return-period enrichment;
+                # filled for discharge-unit gauges, blank for water-level gauges.
+                "returnPeriodYr": (r.get("returnPeriodYr") or "").strip(),
+                "peakDischargeCms": (r.get("dischargePeak_m3s") or r.get("discharge") or "").strip(),
                 "historicalComparison": "",
                 # Kept on the forecast (not just the tuple) so the gauge can be
                 # deep-linked into Flood Hub from the panel.
@@ -309,6 +317,57 @@ def load_impacts(wanted_by_level):
     return totals
 
 
+def assign_admin(forecasts):
+    """Tag each forecast dict with the ADM2 district its gauge/reach physically
+    sits in, by point-in-polygon against geoBoundaries. Streams the layer once
+    (STRtree per batch) to keep memory flat. Sets fc["district"] = "" where there
+    is no usable coordinate or no containing district."""
+    from pyogrio.raw import read
+    from shapely import from_wkb, STRtree, points as shapely_points
+
+    fcs = list(forecasts)
+    coords, idx = [], []
+    for i, fc in enumerate(fcs):
+        fc["district"] = ""                       # default for every forecast
+        try:
+            coords.append((float(fc["lon"]), float(fc["lat"])))
+            idx.append(i)
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not coords:
+        return
+
+    path = os.path.join(BOUNDARIES, ADM2_GPKG)
+    if not os.path.exists(path):
+        print(f"  note: {ADM2_GPKG} not found; district skipped.", file=sys.stderr)
+        return
+
+    pts = shapely_points(coords)
+    assigned = set()
+    skip = 0
+    while True:
+        meta, _fid, geom, fields = read(path, columns=["shapeName"],
+                                        skip_features=skip, max_features=ADMIN_READ_BATCH)
+        n = len(geom)
+        if n == 0:
+            break
+        names = fields[{name: i for i, name in enumerate(meta["fields"])}["shapeName"]]
+        polys = from_wkb([bytes(g) for g in geom])
+        pi, gi = STRtree(polys).query(pts, predicate="intersects")
+        for p_idx, g_idx in zip(pi, gi):
+            if p_idx in assigned:
+                continue
+            if polys[g_idx].contains(pts[p_idx]):
+                assigned.add(p_idx)
+                nm = (names[g_idx] or "").strip()
+                if nm:
+                    fcs[idx[p_idx]]["district"] = nm
+        skip += n
+        if n < ADMIN_READ_BATCH or len(assigned) >= len(coords):
+            break
+    print(f"District lookup: {len(assigned):,}/{len(coords):,} forecast point(s) matched.")
+
+
 def main():
     from shapely.geometry import mapping
 
@@ -345,6 +404,10 @@ def main():
     print(f"  Flood Hub gauges placed in a basin: {len(gauge_basin):,}"
           f" ({len(gauges) - len(gauge_basin):,} fell outside)")
     print(f"Basins flooding (both models): {len(base):,}")
+
+    # Attach each forecast's district (point-in-polygon). Coarser roll-ups reuse
+    # the same forecast dicts, so mutating them here covers every level.
+    assign_admin([fc for fcs in base.values() for fc in fcs])
 
     # PFAF-keyed view of the flagged base basins, then the coarser roll-ups.
     base_by_pfaf = {}

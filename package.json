@@ -9,6 +9,7 @@
     "preview": "vite preview"
   },
   "dependencies": {
+    "@esri/calcite-ui-icons": "^4.5.0",
     "heroicons": "^2.2.0",
     "maplibre-gl": "^6.2.0"
   },
