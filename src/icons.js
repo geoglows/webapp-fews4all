@@ -21,7 +21,7 @@ import calciteLayers from "@esri/calcite-ui-icons/icons/layers-16.svg?raw";
 import calciteAreaHashFilled from "@esri/calcite-ui-icons/icons/area-hash-filled-16.svg?raw";
 import calciteCarTravelMode from "@esri/calcite-ui-icons/icons/car-travel-mode-16.svg?raw";
 import calciteTrainTravelMode from "@esri/calcite-ui-icons/icons/train-travel-mode-16.svg?raw";
-import calciteLasso from "@esri/calcite-ui-icons/icons/lasso-16.svg?raw";
+import calciteMonitor from "@esri/calcite-ui-icons/icons/monitor-16.svg?raw";
 
 const ICONS = {
   "arrow-top-right-on-square": arrowTopRightOnSquare,
@@ -41,13 +41,13 @@ const ICONS = {
   "area-hash-filled":calciteAreaHashFilled,
   "car-travel-mode":calciteCarTravelMode,
   "train-travel-mode":calciteTrainTravelMode,
-  "lasso": calciteLasso
+  "monitor": calciteMonitor
 };
 
 // Filled icons whose paths carry no `fill` (so they'd default to black): inject
 // fill="currentColor" for these so they inherit the surrounding text colour. The
 // stroke-based heroicons must NOT get it (it would fill their outlines solid).
-const FILL_ICONS = new Set(["basemap", "h3-hexagon", "layers","area-hash-filled","car-travel-mode","train-travel-mode","lasso"]);
+const FILL_ICONS = new Set(["basemap", "h3-hexagon", "layers","area-hash-filled","car-travel-mode","train-travel-mode","monitor"]);
 
 // Returns the icon as an HTML string, sized in `em` so the surrounding
 // font-size class still controls it and `currentColor` still inherits — the two

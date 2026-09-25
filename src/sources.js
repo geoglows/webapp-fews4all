@@ -15,8 +15,7 @@ const BASE = import.meta.env.BASE_URL; // public/ -> served from the site root
 export const DATA = {
   basins: BASE + "data_basins.geojson",
   h3: BASE + "data_h3cells.geojson",
-  s2: BASE + "data_s2cells.geojson",
-  streams: BASE + "data_basin_streams.geojson",
-  districts: BASE + "data_basin_districts.geojson",
+  globalStreams: BASE + "data_streams.geojson",
+  boundaries: BASE + "data_boundaries.geojson",
   flash: BASE + "data_flash_floods.geojson",
 };

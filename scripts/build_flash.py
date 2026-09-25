@@ -23,8 +23,8 @@ it spans several regions of one country, country when it spans several countries
 Coverage is only as complete as the boundary files (some countries are absent for
 now); a polygon outside coverage simply gets blank fields.
 
-Reads:  ../Files/urban_flash_floods.geojson              (likely/highly_likely polygons)
-        ../Files/urban_flash_floods_with_location.csv     (per-event centroid + attributes)
+Reads:  <run>/urban_flash_floods.geojson              (likely/highly_likely polygons)
+        <run>/urban_flash_floods_with_location.csv     (per-event centroid + attributes)
         ../Files/International_boundaries/geoBoundariesCGAZ_ADM2.gpkg
         ../Files/International_boundaries/geoBoundariesCGAZ_ADM1.gpkg
         ../Files/International_boundaries/geoBoundariesCGAZ_ADM0.gpkg
@@ -42,8 +42,11 @@ FILES = os.path.join(ROOT, "Files")
 PUBLIC = os.path.join(ROOT, "public")   # the app reads its data from here
 os.makedirs(PUBLIC, exist_ok=True)
 
-GEOJSON_IN = os.path.join(FILES, "urban_flash_floods.geojson")
-CSV_IN = os.path.join(FILES, "urban_flash_floods_with_location.csv")
+# One dated folder per forecast run; see build_cells_h3.py, which uses the same run.
+RUN = "9-23-2026_4-30"
+RUN_DIR = os.path.join(FILES, RUN)
+GEOJSON_IN = os.path.join(RUN_DIR, "urban_flash_floods.geojson")
+CSV_IN = os.path.join(RUN_DIR, "urban_flash_floods_with_location.csv")
 BOUNDARIES = os.path.join(FILES, "International_boundaries")
 ADM2_GPKG = "geoBoundariesCGAZ_ADM2.gpkg"   # districts
 ADM1_GPKG = "geoBoundariesCGAZ_ADM1.gpkg"   # regions / states

@@ -9,8 +9,8 @@ levels 7..4 using the PFAF_ID hierarchy (a level-N basin's code is the first N
 digits of its level-8 descendants').
 
 Reads:  ../Files/global_matches.csv      Basin_ID -> Best_Match (GEOGLOWS comid)
-        ../Files/Geoglows_*.csv          comid, ret_per, mean
-        ../Files/Flood_Hub_Global.csv    gauge severity + lat/lon
+        <run>/mapstyletable_*.csv        comid, ret_per, mean
+        <run>/world_flood_status.csv     gauge severity + lat/lon
         ../Files/Basins/HUC0{4..8}.parquet   basin polygons (HYBAS_ID, PFAF_ID)
 Writes: ../data.geojson                  one FeatureCollection, features tagged
                                          with `res` (the basin level); upload this
@@ -28,8 +28,11 @@ PUBLIC = os.path.join(ROOT, "public")   # the app reads its data from here
 os.makedirs(PUBLIC, exist_ok=True)
 
 MATCHES_CSV = os.path.join(FILES, "global_matches.csv")
-GEOGLOWS_CSV = os.path.join(FILES, "Geoglows_2026-08-19-12.csv")
-FLOOD_HUB_CSV = os.path.join(FILES, "Flood_Hub_Global.csv")
+# One dated folder per forecast run; see build_cells_h3.py, which uses the same run.
+RUN = "9-23-2026_4-30"
+RUN_DIR = os.path.join(FILES, RUN)
+GEOGLOWS_CSV = os.path.join(RUN_DIR, "mapstyletable_2026-09-23-00.csv")
+FLOOD_HUB_CSV = os.path.join(RUN_DIR, "world_flood_status.csv")
 BASINS_DIR = os.path.join(FILES, "Basins")
 IMPACT_DIR = os.path.join(FILES, "Impact")
 HUC12_PARQUET = os.path.join(BASINS_DIR, "HUC12.parquet")
@@ -38,7 +41,15 @@ OUTPUT = os.path.join(PUBLIC, "data_basins.geojson")
 # geoBoundaries ADM2 (districts): each forecast point is placed in the district
 # it physically sits in, giving a specific location instead of a whole-basin one.
 BOUNDARIES = os.path.join(FILES, "International_boundaries")
-ADM2_GPKG = "geoBoundariesCGAZ_ADM2.gpkg"
+# Tried finest first, falling back to the next level only for the points the finer
+# one could not place. CGAZ's ADM2 does not tile every country — Uruguay's units
+# cover 37% of its area, Norway's 70% — so an ADM2-only lookup leaves points in
+# those gaps with no location at all.
+ADMIN_LEVELS = [
+    (2, "geoBoundariesCGAZ_ADM2.gpkg"),
+    (1, "geoBoundariesCGAZ_ADM1.gpkg"),
+    (0, "geoBoundariesCGAZ_ADM0.gpkg"),
+]
 ADMIN_READ_BATCH = 4000   # polygons per streamed read (keeps memory flat)
 
 # Impact stats are measured per HUC12 basin; each file is HYBAS_ID + value
@@ -317,33 +328,22 @@ def load_impacts(wanted_by_level):
     return totals
 
 
-def assign_admin(forecasts):
-    """Tag each forecast dict with the ADM2 district its gauge/reach physically
-    sits in, by point-in-polygon against geoBoundaries. Streams the layer once
-    (STRtree per batch) to keep memory flat. Sets fc["district"] = "" where there
-    is no usable coordinate or no containing district."""
+def _names_at_level(path, pts, wanted):
+    """{point index: containing polygon's name} for the points listed in `wanted`.
+
+    Streams the layer (STRtree per batch) so memory stays flat, and queries only
+    the points still unplaced, so each fallback level costs less than the one
+    before it."""
+    import numpy as np
     from pyogrio.raw import read
-    from shapely import from_wkb, STRtree, points as shapely_points
+    from shapely import from_wkb, STRtree
 
-    fcs = list(forecasts)
-    coords, idx = [], []
-    for i, fc in enumerate(fcs):
-        fc["district"] = ""                       # default for every forecast
-        try:
-            coords.append((float(fc["lon"]), float(fc["lat"])))
-            idx.append(i)
-        except (KeyError, TypeError, ValueError):
-            continue
-    if not coords:
-        return
-
-    path = os.path.join(BOUNDARIES, ADM2_GPKG)
     if not os.path.exists(path):
-        print(f"  note: {ADM2_GPKG} not found; district skipped.", file=sys.stderr)
-        return
-
-    pts = shapely_points(coords)
-    assigned = set()
+        print(f"  note: {os.path.basename(path)} not found; level skipped.", file=sys.stderr)
+        return {}
+    order = np.array(sorted(wanted))
+    sub = pts[order]
+    found = {}
     skip = 0
     while True:
         meta, _fid, geom, fields = read(path, columns=["shapeName"],
@@ -353,19 +353,58 @@ def assign_admin(forecasts):
             break
         names = fields[{name: i for i, name in enumerate(meta["fields"])}["shapeName"]]
         polys = from_wkb([bytes(g) for g in geom])
-        pi, gi = STRtree(polys).query(pts, predicate="intersects")
+        pi, gi = STRtree(polys).query(sub, predicate="intersects")
         for p_idx, g_idx in zip(pi, gi):
-            if p_idx in assigned:
+            key = int(order[p_idx])
+            if key in found:
                 continue
-            if polys[g_idx].contains(pts[p_idx]):
-                assigned.add(p_idx)
+            if polys[g_idx].contains(sub[p_idx]):
                 nm = (names[g_idx] or "").strip()
                 if nm:
-                    fcs[idx[p_idx]]["district"] = nm
+                    found[key] = nm
         skip += n
-        if n < ADMIN_READ_BATCH or len(assigned) >= len(coords):
+        if n < ADMIN_READ_BATCH or len(found) >= len(sub):
             break
-    print(f"District lookup: {len(assigned):,}/{len(coords):,} forecast point(s) matched.")
+    return found
+
+
+def assign_admin(forecasts):
+    """Tag each forecast dict with the place its gauge/reach physically sits in, by
+    point-in-polygon against geoBoundaries — the ADM2 district where there is one,
+    else the ADM1 region, else the ADM0 country. Sets fc["district"] to the name and
+    fc["districtLevel"] to which level it came from (2/1/0), so the panel can say
+    what kind of place it is rather than calling a country a district. Both stay
+    empty where there is no usable coordinate or no containing unit at any level."""
+    from shapely import points as shapely_points
+
+    fcs = list(forecasts)
+    coords, idx = [], []
+    for i, fc in enumerate(fcs):
+        fc["district"] = ""                       # default for every forecast
+        fc["districtLevel"] = ""
+        try:
+            coords.append((float(fc["lon"]), float(fc["lat"])))
+            idx.append(i)
+        except (KeyError, TypeError, ValueError):
+            continue
+    if not coords:
+        return
+
+    pts = shapely_points(coords)
+    remaining = set(range(len(coords)))
+    for level, fname in ADMIN_LEVELS:
+        if not remaining:
+            break
+        found = _names_at_level(os.path.join(BOUNDARIES, fname), pts, remaining)
+        for p_idx, nm in found.items():
+            fcs[idx[p_idx]]["district"] = nm
+            fcs[idx[p_idx]]["districtLevel"] = level
+            remaining.discard(p_idx)
+        if found:
+            print(f"  ADM{level}: placed {len(found):,} point(s)"
+                  + (f", {len(remaining):,} still unplaced" if remaining else ""))
+    print(f"District lookup: {len(coords) - len(remaining):,}/{len(coords):,} "
+          f"forecast point(s) matched.")
 
 
 def main():
