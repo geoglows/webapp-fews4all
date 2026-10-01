@@ -1,9 +1,9 @@
 // The right-hand side panel: legends, model filters, forecast tiles, impact.
 // Renders only; the actions its controls fire are injected by main.js, which keeps
 // the panel free of imports from the layers that call it.
-import {FIELD_LABELS, FLASH_MODELS, FLASH_TIER, FLASH_TIERS, MODEL_HOME, PANEL_MODELS, RIVER_ID_LABEL, SEVERITY, SEV_KEYS, rampColor} from "./config.js";
+import {FIELD_LABELS, FLASH_MODELS, FLASH_TIER, FLASH_TIERS, MODEL_HOME, PANEL_MODELS, RIVER_ID_LABEL, SEVERITY, SEV_KEYS} from "./config.js";
 import {flashChanceLabel, flashNearLabel, fmtCount, fmtFlashIssued, fmtValue, modelLabel, modelLink, nearLabel, worstSeverity} from "./format.js";
-import {flashFill, flashOutline, modelRamp, sevColor, unitLabel, view, visibleFlashModels, visibleModels, visibleSeverities, visibleTiers} from "./settings.js";
+import {flashFill, flashOutline, modelRamp, paletteColor, sevColor, unitLabel, view, visibleFlashModels, visibleModels, visibleSeverities, visibleTiers} from "./settings.js";
 import {icon} from "./icons.js";
 
 // The panel imports no layer module: the layers call in to it, and the two actions
@@ -60,7 +60,7 @@ const hashSwatch = () =>
 function modelLegendHtml(m) {
   const entries = SEV_KEYS.filter((k) => visibleSeverities.has(k)).map((k) => ({
     swatch: colorSwatch(
-      `background:${rampColor(modelRamp[m], k)};border:1px solid rgb(255 255 255 / .25)`),
+      `background:${paletteColor(modelRamp[m], k)};border:1px solid rgb(255 255 255 / .25)`),
     label: SEVERITY[k].label,
   }));
   // Concurrence repeats in every model tile — it describes a set of models, not
@@ -131,19 +131,17 @@ export function renderPanel(props) {
       `<div class="flex items-center justify-between gap-2 mb-1.5">${titleSpan}` +
       collapseBtn(bodyId, "text-slate-400 hover:text-slate-200") + `</div>`;
     const body = fcs.map((fc, i) => {
-      const rows = FIELD_LABELS.filter(([k]) => k !== "historicalComparison").map(([k, label]) => {
-        const lbl = k === "riverId" ? (RIVER_ID_LABEL[m] || label) : label;
+      const rows = FIELD_LABELS.map(([k, label]) => {
+        const lbl = k === "native_id" ? (RIVER_ID_LABEL[m] || label) : label;
         const dt = `<dt class="text-slate-400">${lbl}</dt>`;
         if (k === "severity")
           return `${dt}<dd class="m-0">${badge(fc.severity, sevColor(fc.severity, m))}</dd>`;
         const val = k === "district"
-          ? nearLabel(fc.district, fc.district_count, fc.country, fc.districtLevel)
+          ? nearLabel(fc.district, fc.district_count, fc.country, fc.district_level)
           : fmtValue(k, fc[k]);
         return `${dt}<dd class="m-0 text-slate-100 break-words">${val}</dd>`;
       }).join("");
-      const note = fc.historicalComparison
-        ? `<div class="flex items-start gap-1.5 text-xs text-slate-400 italic mt-2">${icon("clock", "text-sm mt-0.5")}<span>“${fc.historicalComparison}”</span></div>`
-        : "";
+      const note = "";   // no model publishes a historical comparison today
       return `<dl class="grid grid-cols-[128px_1fr] gap-x-2.5 gap-y-1 text-[12.5px]${i ? " mt-2 pt-2 border-t border-slate-700/50" : ""}">${rows}</dl>${note}`;
     }).join("");
     return `<div id="tile-river-${m}" class="bg-[#1b2a3a] border border-slate-700 border-l-4 rounded-[10px] px-3.5 py-3 mb-3${hide}" style="border-left-color:${sevColor(worstSeverity(fcs), m)}">` +

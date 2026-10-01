@@ -1,13 +1,12 @@
 // Display Options: everything about how the map is drawn, split into two tabs —
 // one for the flagged areas (cells or basins), one for the flash-flood overlay.
 // The tabs exist so the panel stays short enough to leave most of the map visible.
-import {DATASETS_MENU, FLASH_TIER, FLASH_TIERS, PANEL_MODELS, RAMPS, SEVERITY, SEV_KEYS,
-  rampColor} from "../config.js";
-import {applyFillStyle, loadDataset} from "../layers/cells.js";
+import {DATASETS_MENU, FLASH_TIER, FLASH_TIERS, PANEL_MODELS, SEVERITY, SEV_KEYS} from "../config.js";
+import {applyFillStyle} from "../layers/cells_tiles.js";
 import {applyFlashStyle} from "../layers/flash.js";
 import {dropdownControl} from "../ui/dropdown.js";
 import {modelLabel} from "../format.js";
-import {modelRamp, restoreDisplayDefaults, view, visibleSeverities, visibleTiers} from "../settings.js";
+import {modelRamp, palettes, paletteColor, restoreDisplayDefaults, view, visibleSeverities, visibleTiers} from "../settings.js";
 
 // main.js injects what a settings change should trigger, so this control never
 // imports the orchestration that imports it.
@@ -16,6 +15,19 @@ export function init(a) { actions = Object.assign(actions, a); }
 
 let displayPanelEl = null;          // the menu's panel, once mounted
 let activeTab = "areas";            // areas | flash
+let rebuildBody = null;             // set once the panel is mounted; see restate()
+
+/**
+ * Rebuild the menu from current settings.
+ *
+ * The control is added to the map before the release finishes loading, so its
+ * first render lists whatever palettes the app ships with rather than the ones
+ * the release actually offers. Calling this after a release lands is what makes
+ * the two agree — without it the menu is permanently a release behind.
+ */
+export function restate() {
+  if (rebuildBody) rebuildBody();
+}
 
 export function highlightDataset() {
   if (!displayPanelEl) return;
@@ -27,28 +39,28 @@ export function highlightDataset() {
   });
 }
 
-// Repaint the three-shade strip beside each ramp picker. Called by the picker's
-// own change handler — the strip is this module's business, not the map's.
-export function refreshRampPreviews() {
-  if (!displayPanelEl) return;
-  displayPanelEl.querySelectorAll(".ramp-preview").forEach((el) => {
-    el.innerHTML = rampSwatches(el.dataset.ramp);
-  });
-}
+const paletteLabel = (id) => (palettes.find((p) => p.id === id) || {}).label || id;
 
-const rampSwatches = (id) => SEV_KEYS.map((k) =>
-  `<span style="display:inline-block;width:14px;height:10px;border-radius:2px;` +
-  `background:${rampColor(id, k)}"></span>`).join("");
+// The three rungs of a palette as one small bar: warning, danger, extreme, left to
+// right. It sits beside the picker so the name in the list always has the colours
+// it stands for next to it — "Magma" means nothing on its own.
+const paletteSample = (id) =>
+  `<span class="ramp-preview" data-for-sample="${id}" style="display:inline-flex;` +
+  `width:36px;height:14px;border-radius:3px;overflow:hidden;border:1px solid #cbd5e1;` +
+  `flex:0 0 auto">` +
+  SEV_KEYS.map((k) => `<span style="flex:1;background:${paletteColor(id, k)}"></span>`).join("") +
+  `</span>`;
 
-// label + a live three-shade preview + the <select> of ramps.
+// model name | sample | the list of palettes by name
 function rampRow(key, label, current) {
-  return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:5px">` +
-    `<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${label}</span>` +
-    `<span class="ramp-preview" data-ramp="${current}" data-for="${key}" ` +
-    `style="display:inline-flex;gap:2px">${rampSwatches(current)}</span>` +
-    `<select class="ramp-select" data-key="${key}" style="font:inherit;padding:2px 4px;border:1px solid #cbd5e1;` +
-    `border-radius:5px;background:#fff;color:#0f172a;cursor:pointer">` +
-    RAMPS.map((r) => `<option value="${r.id}"${r.id === current ? " selected" : ""}>${r.label}</option>`).join("") +
+  return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">` +
+    `<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;` +
+    `text-overflow:ellipsis">${label}</span>` +
+    paletteSample(current) +
+    `<select class="ramp-select" data-key="${key}" style="font:inherit;padding:2px 4px;` +
+    `border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#0f172a;cursor:pointer">` +
+    palettes.map((p) =>
+      `<option value="${p.id}"${p.id === current ? " selected" : ""}>${p.label}</option>`).join("") +
     `</select></div>`;
 }
 
@@ -71,15 +83,10 @@ const slider = (id, value) =>
 // ---- Tab bodies ------------------------------------------------------------
 
 function areasTab() {
-  return head("Flagged area") +
-    `<div style="display:flex;gap:5px;margin-bottom:2px">` +
-    DATASETS_MENU.map((d) =>
-      `<button type="button" data-ds="${d.key}" class="ds-row" style="flex:1;border:1px solid #cbd5e1;` +
-      `background:#fff;padding:5px 7px;border-radius:6px;cursor:pointer;color:#334155;font:inherit;` +
-      `white-space:nowrap">${d.label}</button>`).join("") +
-    `</div>` + rule +
-
-    head("Appearance") +
+  // The H3/Basins switch is gone for now: the CSV pipeline builds cells only, and
+  // an option that 404s is worse than no option. It comes back when basins are
+  // rebuilt on the new backend.
+  return head("Appearance") +
     PANEL_MODELS.map((m) => rampRow(m, modelLabel(m), modelRamp[m])).join("") +
     slider("disp-opacity", view.fillOpacity) +
     check("disp-outline", "Outline only", view.outlineOnly) + rule +
@@ -146,21 +153,16 @@ export function displayControl() {
         bindBody();
         if (activeTab === "areas") highlightDataset();
       }
+      rebuildBody = renderTab;
 
       // Every control in the body is re-bound whenever the body is rebuilt.
       function bindBody() {
         const $ = (sel) => body.querySelector(sel);
 
-        body.querySelectorAll(".ds-row").forEach((b) => b.addEventListener("click", () => {
-          if (b.dataset.ds !== view.currentDatasetKey) loadDataset(b.dataset.ds, false);
-        }));
-
         body.querySelectorAll(".ramp-select").forEach((sel) => sel.addEventListener("change", () => {
           const key = sel.dataset.key;
           if (key === "flash") view.flashRampId = sel.value; else modelRamp[key] = sel.value;
-          const pv = body.querySelector(`.ramp-preview[data-for="${key}"]`);
-          if (pv) pv.dataset.ramp = sel.value;
-          refreshRampPreviews();          // the strip beside the picker
+          renderTab();                    // the sample beside the picker follows
           actions.onDisplayChange();      // the map and the panel's legends
         }));
 

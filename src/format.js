@@ -1,6 +1,6 @@
 // Pure helpers: value formatting, human labels, deep links, severity ranking, and
 // the colour maths. Depends only on config.js, so it is safe to import anywhere.
-import {FLASH_TIER, LINK_ZOOM, MODEL_LABELS, SEVERITY, STREAM_ALL_ZOOM} from "./config.js";
+import {FLASH_TIER, LINK_ZOOM, MODEL_LABELS, SEVERITY} from "./config.js";
 
 // The model whose forecast set the cell's worst severity — it owns the colour
 // of an undivided cell. Ties go to the first model in PANEL_MODELS order.
@@ -20,10 +20,6 @@ export function darken(hex, f = 0.55) {
   const c = (sh) => Math.round(((n >> sh) & 255) * f).toString(16).padStart(2, "0");
   return "#" + c(16) + c(8) + c(0);
 }
-export function streamMinOrder(z) {
-  return z >= STREAM_ALL_ZOOM ? 1 : Math.max(1, STREAM_ALL_ZOOM - Math.floor(z) + 1);
-}
-
 // Chance label from polygon_type ("likely" -> "Likely"), via the shared legend.
 export const flashChanceLabel = (t) => (FLASH_TIER[t] || {}).label || t || "—";
 

@@ -12,6 +12,13 @@
 
 const BASE = import.meta.env.BASE_URL; // public/ -> served from the site root
 
+// One forecast release's delivered tables. The backend writes these per run; the
+// date is a constant until the date picker exists, and the path is the dev-server
+// one — Vite serves the project root, so backend/output resolves while `npm run
+// dev` is running. Production needs these served from somewhere real.
+export const RELEASE = "2026-09-23";
+export const RELEASE_BASE = `/backend/output/${RELEASE}/`;
+
 export const DATA = {
   basins: BASE + "data_basins.geojson",
   h3: BASE + "data_h3cells.geojson",

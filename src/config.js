@@ -20,14 +20,22 @@ export const HASH_COLOR = "#0f172a";   // neutral dark for the multi-model legen
 // overlay takes its two tiers from the light and dark ends of its own ramp.
 // "Amber" is the app's historic palette and stays the default everywhere, so
 // the map opens looking as it always has until a ramp is changed.
+// What the app shows before a release has loaded. The backend owns the real list
+// (palettes.csv) and settings.setPalettes swaps it in; these exist so the Display
+// menu and the panel legends are never empty during that first moment.
 export const RAMPS = [
-  {id: "amber", label: "Amber – Red", warning: "#ffd21f", danger: "#ff8c00", extreme: "#e0201b"},
-  {id: "blue", label: "Blues", warning: "#93c5fd", danger: "#3b82f6", extreme: "#1e40af"},
-  {id: "purple", label: "Purples", warning: "#a78bfa", danger: "#8b5cf6", extreme: "#6d28d9"},
-  {id: "green", label: "Greens", warning: "#86efac", danger: "#22c55e", extreme: "#15803d"},
-  {id: "teal", label: "Teals", warning: "#5eead4", danger: "#14b8a6", extreme: "#0f766e"},
-  {id: "pink", label: "Pinks", warning: "#f9a8d4", danger: "#ec4899", extreme: "#9d174d"},
+  {id: "viridis", label: "Viridis", warning: "#2a788e", danger: "#21918c", extreme: "#22a884"},
+  {id: "plasma", label: "Plasma", warning: "#b12a90", danger: "#cc4778", extreme: "#e16462"},
+  {id: "inferno", label: "Inferno", warning: "#932667", danger: "#bc3754", extreme: "#dd513a"},
+  {id: "magma", label: "Magma", warning: "#8c2981", danger: "#b73779", extreme: "#de4968"},
+  {id: "cividis", label: "Cividis", warning: "#666970", danger: "#7d7c78", extreme: "#948e77"},
+  {id: "winter", label: "Winter", warning: "#0066cc", danger: "#0080bf", extreme: "#0099b2"},
+  {id: "autumn", label: "Autumn", warning: "#ff6600", danger: "#ff8000", extreme: "#ff9900"},
+  {id: "spring", label: "Spring", warning: "#ff6699", danger: "#ff807f", extreme: "#ff9966"},
+  {id: "gist_heat", label: "Heat", warning: "#990000", danger: "#c00100", extreme: "#e53300"},
 ];
+
+
 const RAMP_BY_ID = Object.fromEntries(RAMPS.map((r) => [r.id, r]));
 const rampOf = (id) => RAMP_BY_ID[id] || RAMPS[0];
 export const rampColor = (id, sev) => rampOf(id)[(sev || "").toLowerCase()] || DEFAULT_COLOR;
@@ -43,23 +51,28 @@ export const RES_ZOOM_STEP = 2;
 // path; the basin build stays available from the Flagged Area Type control.
 export const DEFAULT_DATASET = "h3";
 
+// Keyed to the columns of the delivered forecasts.csv. The CSV is snake_case and
+// is the contract now, so the panel reads those names directly rather than keeping
+// a camelCase alias layer that would have to be maintained in step with it.
+// "Historical" is gone: no model ever filled it, and the backend no longer emits
+// a column for it.
 export const FIELD_LABELS = [
   ["severity", "Severity"],
-  ["riverId", "River ID"],
+  ["native_id", "River ID"],
   ["district", "Near"],
-  ["returnPeriodYr", "Return period"],
-  ["peakDischargeCms", "Mean discharge"], //this will need to be changed into peak, the info from geoglows is in mean discharge.
-  ["issuedTime", "Issued"],
-  ["startTime", "Start"],
-  ["peakTime", "Peak"],
-  ["endTime", "End"],
-  ["historicalComparison", "Historical"],
+  ["return_period_yr", "Return period"],
+  ["peak_discharge_cms", "Mean discharge"], //this will need to be changed into peak, the info from geoglows is in mean discharge.
+  ["issued_time", "Issued"],
+  ["start_time", "Start"],
+  ["peak_time", "Peak"],
+  ["end_time", "End"],
 ];
 // The riverId row is labelled per model: GEOGLOWS forecasts a reach ("River
 // ID"), Flood Hub a gauge, GloFAS a fixed reporting point on its own grid —
 // which is neither a reach nor a gauge. Falls back to the label above.
 export const RIVER_ID_LABEL = {
   geoglows: "River ID", flood_hub: "Gauge", glofas: "Reporting point",
+  flash: "Area",
 };
 
 // Every pipeline stamps the FeatureCollection with a `kind`, so all the
@@ -88,9 +101,6 @@ export const DATASETS_MENU = [
   {key: "h3", label: "H3 cells", url: DATA.h3},
   {key: "basins", label: "Basins", url: DATA.basins},
 ];
-// MapLibre zoom sits ~1 below Leaflet, so the "show all tributaries" zoom is a
-// step lower than the local build's 10.
-export const STREAM_ALL_ZOOM = 9;
 export const FLASH_SRC = "flash-src";
 // Fill is split by type so highly_likely can stack above likely. The fills
 // double as hover/click hit targets; FLASH_LAYERS is bottom->top within the group.
@@ -163,6 +173,16 @@ export const stateOn = (key) => ["boolean", ["feature-state", key], false];
 // System v3, which draws its rivers as one flat blue over a light base map.
 export const STREAMS_SRC = "streams-src";
 export const STREAMS_LAYERS = ["streams-line"];
+// A vector source is a bundle of named layers; this is the one tippecanoe wrote.
+export const STREAMS_SOURCE_LAYER = "streams";
+// RFS v3's tiles spell Strahler order `strahlerOrder`; the retired GeoJSON build
+// called the same value `ord`.
+export const STREAM_ORDER_FIELD = "strahlerOrder";
+// Dev path: Vite serves the project root and honours range requests, so the
+// archive resolves where the static tier keeps it. For production, serve
+// backend/static/tiles/ from somewhere real and repoint this — it is the only
+// place the archive is named.
+export const STREAMS_TILES_URL = "pmtiles:///backend/static/tiles/streams.pmtiles";
 // River Forecast System v3's own river styling, taken from its streams.js rather
 // than approximated: the blue is its STANDARD_COLOR, and the width ramp is its
 // WIDTH_BASE/WIDTH_MAX across ORDER_DOMAIN, scaled by its zoom stops. Keying width

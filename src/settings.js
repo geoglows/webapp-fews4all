@@ -2,7 +2,7 @@
 // the colours derived from it. `view` holds the values that get reassigned (an ESM
 // import binding cannot be assigned by the importing module); the Sets and the ramp
 // map are mutated in place, so they are exported directly.
-import {DEFAULT_COLOR, DEFAULT_DATASET, FLASH_MODELS, FLASH_TIER, FLASH_TIERS, PANEL_MODELS, RAMPS, SEVERITY, SEV_KEYS, rampColor} from "./config.js";
+import {DEFAULT_COLOR, DEFAULT_DATASET, FLASH_MODELS, FLASH_TIER, FLASH_TIERS, PANEL_MODELS, RAMPS, SEVERITY, SEV_KEYS} from "./config.js";
 import {darken} from "./format.js";
 
 // ---- Display settings (all driven by the Display menu) --------------------
@@ -15,16 +15,18 @@ import {darken} from "./format.js";
 // them in one place is the point — a default that lives only in the initialiser
 // drifts away from the "Restore defaults" button the first time either is edited.
 const DISPLAY_DEFAULTS = {
-  flashRampId: "purple",
+  flashRampId: "inferno",
   flashOpacity: 0.5,                // "highly likely" fill; "likely" scales off it
   flashOutlineOnly: false,
-  hatchOn: true,                    // hash + outline emphasis
+  hatchOn: false,                   // the concurrence hash; off until asked for
   outlineOnly: false,               // draw outlines, skip fills
   fillOpacity: 0.3,                 // resting fill opacity
 };
 // Amber is the app's historic palette and every model opens on it. Deriving the
 // map from PANEL_MODELS means a model added there needs no second edit here.
-const DEFAULT_RAMP = RAMPS[0].id;
+// Every model opens on this one. Models are distinguished by the split bands and
+// the panel rather than by colour.
+const DEFAULT_RAMP = "inferno";
 
 export const view = {
   // Wording for the loaded dataset (cell vs basin), replaced once its `kind` is
@@ -40,15 +42,41 @@ export const view = {
 };
 
 export const modelRamp = Object.fromEntries(PANEL_MODELS.map((m) => [m, DEFAULT_RAMP]));
+
+// ---- palettes --------------------------------------------------------------
+// The backend owns the palettes; these are only what the app shows before a
+// release has loaded. `setPalettes` swaps in the real list, in place, because
+// the Display menu and the panel hold a reference to this array.
+export const palettes = RAMPS.map((r) => ({...r}));
+
+export function setPalettes(list) {
+  if (!list || !list.length) return;
+  palettes.length = 0;
+  for (const p of list) palettes.push(p);
+}
+
+/** A severity's colour in one palette. The single lookup for the whole app. */
+export function paletteColor(id, sev) {
+  const k = (sev || "").toLowerCase();
+  const p = palettes.find((x) => x.id === id) || palettes[0];
+  return (p && p[k]) || DEFAULT_COLOR;
+}
+
+/** Default each model to the palette the release says it uses. */
+export function setModelPalettes(models) {
+  for (const m of models || []) {
+    if (m && m.model && m.palette) modelRamp[m.model] = m.palette;
+  }
+}
 export const visibleSeverities = new Set(SEV_KEYS);          // severity filter
 
 // A severity's colour in one model's ramp (the panel's badges and accents).
 export function sevColor(s, model) {
   const k = (s || "").toLowerCase();
   if (!SEVERITY[k]) return DEFAULT_COLOR;
-  return rampColor(modelRamp[model] || RAMPS[0].id, k);
+  return paletteColor(modelRamp[model] || DEFAULT_RAMP, k);
 }
-export const flashFill = (t) => rampColor(view.flashRampId, (FLASH_TIER[t] || {}).sev);
+export const flashFill = (t) => paletteColor(view.flashRampId, (FLASH_TIER[t] || {}).sev);
 export const flashOutline = (t) => darken(flashFill(t), 0.7);
 
 export function unitLabel(props) {
@@ -62,7 +90,10 @@ export function unitLabel(props) {
 // default to all-on; each section's dropdown toggles its tiles (and, for flash,
 // the map polygons).
 export const visibleModels = new Set(PANEL_MODELS);
-export const visibleFlashModels = new Set(FLASH_MODELS.map((fm) => fm.key));
+// Flash floods start switched OFF. They cover far more ground than the river
+// models — 183 areas against a few thousand reaches — so leaving them on by
+// default buries the river signal the app is mainly about. The user turns them on.
+export const visibleFlashModels = new Set();
 
 // Which flash tiers are drawn — the flash-side counterpart of visibleSeverities.
 export const visibleTiers = new Set(FLASH_TIERS);

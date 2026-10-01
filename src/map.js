@@ -1,12 +1,21 @@
 // The MapLibre map itself, the shared hover tooltip, layer stacking, and the
 // resolution readout. Everything map-related that no single layer owns.
 import maplibreWorkerUrl from "maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url";
-import {AttributionControl, Map as MapLibreMap, NavigationControl, Popup, setWorkerUrl} from "maplibre-gl";
+import {AttributionControl, Map as MapLibreMap, NavigationControl, Popup, addProtocol, setWorkerUrl} from "maplibre-gl";
+import {Protocol} from "pmtiles";
 import {BASEMAPS, DEFAULT_BASEMAP, basemapLayerIds} from "./basemaps.js";
 import {LAYER_ORDER} from "./config.js";
 import {view} from "./settings.js";
 
 setWorkerUrl(maplibreWorkerUrl);
+
+// A PMTiles archive is one file holding a whole tile pyramid, read with HTTP range
+// requests. MapLibre has no idea what a `pmtiles://` url means until a handler is
+// registered, and it must exist before any source using one is added — so it
+// happens here, at module load, alongside the map. The instance is kept in a
+// binding because the protocol closes over its own cache.
+const pmtilesProtocol = new Protocol();
+addProtocol("pmtiles", pmtilesProtocol.tile);
 
 // ---- Map ------------------------------------------------------------------
 

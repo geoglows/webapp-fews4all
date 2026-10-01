@@ -17,11 +17,13 @@
 import "./style.css";                       // Tailwind + theme + MapLibre overrides
 import "maplibre-gl/dist/maplibre-gl.css";  // MapLibre's own stylesheet (from npm)
 
-import {DEFAULT_DATASET} from "./config.js";
+import {DATASETS} from "./config.js";
+import {RELEASE_BASE} from "./sources.js";
+import {loadRelease} from "./release.js";
 import {map} from "./map.js";
-import {visibleFlashModels} from "./settings.js";
+import {view, visibleFlashModels} from "./settings.js";
 import * as panel from "./panel.js";
-import * as cells from "./layers/cells.js";
+import * as cells from "./layers/cells_tiles.js";
 import * as flash from "./layers/flash.js";
 import * as boundaries from "./layers/boundaries.js";
 import * as streams from "./layers/streams.js";
@@ -33,7 +35,7 @@ import * as display from "./controls/display.js";
 // the panel's legends. The Display menu fires this; it doesn't know what it hits.
 function applyDisplaySettings() {
   cells.ensureHashImages();
-  cells.refreshFeatures();
+  cells.refresh();
   flash.applyFlashColors();
   panel.rerenderPanel();
 }
@@ -41,28 +43,49 @@ function applyDisplaySettings() {
 // ---- Wiring ---------------------------------------------------------------
 // The panel's own controls act on the layers; the layers never import a control.
 panel.init({
-  refreshFeatures: cells.refreshFeatures,
+  refreshFeatures: () => cells.refresh(),
   setFlashOn: flash.setFlashOn,
 });
 
-// Switching dataset has to restate the Display menu's highlight, which cells.js
-// must not reach into directly.
-cells.init({onDatasetChange: display.highlightDataset});
+// The map layer knows a cell was clicked; the panel knows how to draw one. This
+// adapter is the whole join between them: the layer hands over the cell row and
+// the forecasts still passing the filters, shaped the way the panel already reads.
+cells.init({
+  onSelect: (cell, forecasts) => panel.renderPanel({...cell, forecasts}),
+  onClear: () => panel.renderPanel(null),
+});
 
 display.init({onDisplayChange: applyDisplaySettings});
 
 // ---- Boot -----------------------------------------------------------------
 map.once("load", () => {
-  map.on("zoomend", cells.onZoomEnd);
-  map.on("zoomend", streams.updateStreamsLOD);        // rivers telescope by zoom
   map.on("zoomend", boundaries.updateBoundariesLOD);  // ADM0 -> ADM1 -> ADM2
   // Two stacked dropdowns in the top-right column.
   map.addControl(basemapControl(), "top-right");
   map.addControl(display.displayControl(), "top-right");
   map.addControl(contextControl(), "top-right");
-  // `false` = don't reframe to the data's extent; the configured world view above
-  // is the opening shot, so it doesn't drift as the flagged footprint changes.
-  cells.loadDataset(DEFAULT_DATASET, false);  // interactions bind on first build
+  // Wording is fixed now that cells are the only flagged-area build.
+  view.dataset = DATASETS["h3-telescoping"];
+  panel.applyDatasetWording();
+
+  // One release: the rules, the tables, and the tile sources they point at. The
+  // map draws nothing until this resolves, which is why failure goes to the
+  // panel's error state rather than the console.
+  // Draw the panel's model tiles straight away, in standby. The tiles are how a
+  // user learns which models exist and what their colours mean, so an empty panel
+  // until the first click hides the legend exactly when it is most needed.
+  panel.renderPanel(null);
+
+  loadRelease(RELEASE_BASE)
+    .then((release) => {
+      cells.build(release);
+      // The controls were mounted before this resolved, so they are still showing
+      // the app's built-in defaults. Restate them now that the release has said
+      // which palettes exist and which one each model opens on.
+      display.restate();
+      panel.rerenderPanel();
+    })
+    .catch(panel.panelError);
   // Flash models default to on, so draw their polygons at startup.
   if (visibleFlashModels.has("flood_hub")) flash.setFlashOn(true);
 });
