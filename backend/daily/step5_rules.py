@@ -86,7 +86,9 @@ def write_csv(path, columns, rows):
 
 
 def main(release_dir=None):
-    out_dir = release_dir or os.path.join(C.OUTPUT_DIR, sorted(os.listdir(C.OUTPUT_DIR))[0])
+    out_dir = release_dir or C.latest_release()
+    if not out_dir:
+        sys.exit(f"No release folder under {C.OUTPUT_DIR}. Run step 2 first.")
     cells_path = os.path.join(out_dir, "cells.csv")
     if not os.path.exists(cells_path):
         sys.exit(f"Not found: {cells_path}\nRun step 4 first.")

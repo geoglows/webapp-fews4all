@@ -2,11 +2,11 @@
 // layer, independent of the flagged-area dataset.
 import {DATA} from "../sources.js";
 import {FLASH_FILL_LAYERS, FLASH_LAYERS, FLASH_SRC, FLASH_TIER, FLASH_TIERS, FLASH_TIER_LAYERS, stateOn} from "../config.js";
-import {applyLayerOrder, map, tooltip} from "../map.js";
-import {boundsOf} from "../geometry.js";
+import {applyLayerOrder, map, registerPointerSource, registerTooltipLayers, tooltip} from "../map.js";
+import {boundsNear, boundsOf} from "../geometry.js";
 import {flashChanceLabel} from "../format.js";
 import {flashFill, flashOutline, view, visibleFlashModels, visibleTiers} from "../settings.js";
-import {rerenderPanel, scrollPanelToSection, setFlashProps} from "../panel.js";
+import {rerenderPanel, setFlashProps} from "../panel.js";
 
 // Flood Hub flash-flood polygons — a global overlay (available in every dataset
 // view) toggled from the "Flash Floods" section at the bottom of the side panel.
@@ -128,32 +128,48 @@ let flashInteractionsBound = false;
 function bindFlashInteractions() {
   if (flashInteractionsBound) return;
   flashInteractionsBound = true;
-  FLASH_FILL_LAYERS.forEach((id) => {
-    map.on("mousemove", id, (e) => {
-      const f = e.features[0];
-      if (!f) return;
-      map.getCanvas().style.cursor = "pointer";
-      tooltip.setLngLat(e.lngLat).setHTML(flashTooltipHtml(f.properties)).addTo(map);
-    });
-    map.on("mouseleave", id, () => {
-      map.getCanvas().style.cursor = "";
-      tooltip.remove();
-    });
-    // Click a flash polygon to frame it on screen. Prefer the full source
-    // geometry, since rendered features can be clipped at tile edges.
-    map.on("click", id, (e) => {
-      const hit = e.features && e.features[0];
-      if (!hit) return;
+  registerTooltipLayers(...FLASH_FILL_LAYERS);
+
+  // Registered AFTER the cells, so an overlap reads river first then flash — the
+  // order the panel lists them in. map.js runs one query across both and joins
+  // whatever each returns, so a polygon over a flagged cell names both rather
+  // than whichever handler happened to fire last.
+  registerPointerSource({
+    key: "flash",
+    layers: () => FLASH_FILL_LAYERS,
+    hover: (hits) => (hits[0] ? flashTooltipHtml(hits[0].properties) : ""),
+    click(hits, _e, ctx) {
+      const hit = hits[0];
+      // Off a polygon: drop the selection rather than leaving the tile showing a
+      // shape the viewer has clicked away from. Only worth a re-render when
+      // something was actually selected.
+      if (!hit) {
+        if (selectedFlash) { clearFlashSelection(); rerenderPanel(); }
+        return null;
+      }
+      // Prefer the full source geometry: rendered features are clipped at tile
+      // edges, so framing from one would cut the polygon off.
       const src = flashData && flashData.features.find(
         (x) => x.properties.polygonId === hit.properties.polygonId);
-      const b = boundsOf([src || hit]);
-      if (!b.isEmpty()) map.fitBounds(b, {padding: 60, maxZoom: 12, duration: 600});
+      // Frame the polygon only when nothing else claimed the view. A flash
+      // polygon is far larger than a hexagon, so fitting it zooms out — over a
+      // flagged cell that would undo the drill and leave the cell unreachable.
+      let camera = false;
+      if (!ctx.cameraTaken) {
+        // Source coordinates live in [-180, 180]; the viewer may be in another
+        // world copy, so frame the polygon where they are looking.
+        const b = boundsNear(boundsOf([src || hit]), map.getCenter().lng);
+        if (!b.isEmpty()) {
+          map.fitBounds(b, {padding: 60, maxZoom: 12, duration: 600});
+          camera = true;
+        }
+      }
       selectedFlash = (src || hit).properties;   // fill the Flood Hub tile
       setFlashSelected(selectedFlash.polygonId);  // light up the polygon on the map
       setFlashProps(selectedFlash);               // hand it to the panel to render
       rerenderPanel();
-      scrollPanelToSection("section-flash");      // reveal the flash tile just filled
-    });
+      return {panel: true, camera};
+    },
   });
 }
 

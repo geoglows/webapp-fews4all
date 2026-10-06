@@ -149,51 +149,169 @@ def read_flood_hub(path):
 
 
 def read_glofas(path):
-    """GloFAS reporting points under alert. Point forecasts, like Flood Hub.
+    """GloFAS alerts, read from the severity grids rather than the reporting points.
 
-    `ThresGroup` is the highest discharge threshold whose maximum ensemble
-    exceedance probability reached 30% — 16 of the 51 members. 0 means the point
-    is watched but not alerting. The three thresholds are the 2-, 5- and 20-year
-    return periods, the same ladder GEOGLOWS is cut at.
+    `path` is the 2-year grid; the 5- and 20-year grids sit beside it under the
+    same release stamp. Each is a global 0.05-degree field carried only on river
+    pixels, whose value is how many of the 51 ensemble members exceeded that
+    return period. A pixel is flagged at the highest level reaching 30% of the
+    ensemble — 16 members.
 
-    `start_time` stays blank on purpose. `LeadtimeH` looks like an event start but
-    is not one: on 90 of the 1,012 points that carry it, it lands AFTER PeakTime,
-    and every one of those 90 is flagged EarlyPeak. It is the lead time of the
-    strongest probability, not of the first crossing, so it rides along unchanged
-    as lead_time_days rather than being written into a field it would falsify.
+    That is the same rule the reporting points encode as `ThresGroup`, which is
+    why this is a change of resolution and not a change of source. Sampling these
+    grids at all 4,122 point coordinates reproduces `ThresGroup` exactly, with no
+    exceptions, and the X/Y columns snap to grid centres at zero distance: the
+    points ARE pixels. They are a 5% sample of the field — 1,330 alerting points
+    against 26,185 alerting pixels — so reading the grid instead keeps every cell
+    the points produced and adds roughly twenty thousand more.
+
+    The points still ride along as an overlay. The grid has no concept of a
+    station, a river, or the day a flood peaks, so where a pixel IS a point its
+    row keeps that point's id and attributes unchanged and the output for it is
+    identical to what the point reader wrote. Pixels without one carry severity,
+    return period and position, and let step 4's ADM cascade do the naming. No
+    attribute is ever inherited from a neighbouring point: the nearest one sits
+    20 km away at the median and disagrees on the alert level once in five, which
+    would be a guess dressed as a fact.
+
+    `peak_discharge_cms` and `start_time` stay blank, as they were on the point
+    path — GloFAS publishes neither. `lead_time_days` is blank off the overlay:
+    meanLT.nc looks like the gridded `LeadtimeH` but matches it on only 9.8% of
+    the points where both exist, so it is a different quantity and is not used.
+    """
+    import numpy as np
+    import netCDF4
+
+    stamp = os.path.basename(path).split("_AL_")[-1].split(".")[0]
+    issued = _glofas_issued(stamp)
+    folder = os.path.dirname(path)
+
+    lat = lon = None
+    level_of = None
+    for group in sorted(C.GLOFAS_GRID_LEVELS):                 # 1, 2, 3
+        name = os.path.basename(path).replace(
+            f"sumAL_{C.GLOFAS_GRID_LEVELS[1]}_AL_",
+            f"sumAL_{C.GLOFAS_GRID_LEVELS[group]}_AL_")
+        p = os.path.join(folder, name)
+        if not os.path.exists(p):
+            sys.exit(f"{os.path.basename(path)}: companion grid not found: {name}")
+        with netCDF4.Dataset(p) as d:
+            if lat is None:
+                lat = np.asarray(d.variables["lat"][:])
+                lon = np.asarray(d.variables["lon"][:])
+                level_of = np.zeros((lat.size, lon.size), dtype=np.int8)
+            v = d.variables[C.GLOFAS_GRID_VAR]
+            counts = np.ma.filled(v[:], v._FillValue)
+            # Later levels overwrite earlier ones, so a pixel ends up at the
+            # highest it reaches. The levels nest — every 20-year pixel is also a
+            # 5-year pixel — so this cannot leave a gap.
+            level_of[(counts != v._FillValue)
+                     & (counts >= C.GLOFAS_ALERT_MEMBERS)] = group
+
+    points = _glofas_points(folder)
+    iy, ix = np.nonzero(level_of > 0)
+
+    # One forecast per CELL, not per pixel. A res-6 hexagon is 36.1 km2 while a
+    # 0.05-degree pixel runs from 30.4 km2 at the equator down to 13.6 km2 above
+    # 60 degrees, so two and three pixels routinely land in the same hexagon —
+    # 3,816 of 22,057 cells in this forecast — and one forecast each puts the
+    # identical warning in the panel two and three times over. Nothing separates
+    # them: they agree on severity in 93.5% of those cells and on every displayed
+    # field in 72.7%.
+    #
+    # The cell keeps the WORST severity among its pixels, which is what the
+    # hexagon is already coloured by, so nothing on the map moves — only the
+    # repeated row leaves. Choosing the most DOWNSTREAM pixel would be better
+    # hydrology, but these files carry no flow direction and no upstream area,
+    # just a value per pixel; and it could resolve an extreme-and-danger pair
+    # down to danger, which is the wrong direction for a warning to travel.
+    import h3
+
+    # Severity and identity come from the worst pixel in the cell. The PLACE
+    # names come from the cell's gauge if it has one, even where that gauge is
+    # not the worst pixel: `station` and `river` answer where the cell IS and
+    # stay true however bad the forecast gets, while `peak_time` and
+    # `lead_time_days` belong to one pixel's own forecast and would be a lie
+    # pinned to another pixel's severity.
+    #
+    # Two gauges in one hexagon is the one place upstream area exists, so it
+    # settles that tie: the larger catchment is the downstream one, and the reach
+    # a reader is likelier to mean.
+    best, gauge = {}, {}
+    for y, x in zip(iy, ix):
+        la, lo = round(float(lat[y]), 3), round(float(lon[x]), 3)
+        cell = h3.latlng_to_cell(la, lo, C.BASE_RES)
+        pt = points.get((la, lo))
+        key = (int(level_of[y, x]), 1 if pt else 0)
+        if cell not in best or key > best[cell][0]:
+            best[cell] = (key, la, lo, pt or {})
+        if pt and (cell not in gauge or pt["ups_area"] > gauge[cell]["ups_area"]):
+            gauge[cell] = pt
+
+    rows = []
+    for cell, ((group, _has_pt), la, lo, pt) in best.items():
+        place = gauge.get(cell) or pt
+        r = blank_record()
+        r.update({
+            "model": "glofas",
+            "severity": C.GLOFAS_SEVERITY[group],
+            "native_id": pt.get("native_id") or f"g{la:.3f}_{lo:.3f}",
+            "return_period_yr": C.GLOFAS_RETURN_PERIOD[group],
+            "peak_discharge_cms": "",
+            "issued_time": pt.get("issued_time") or issued,
+            "peak_time": pt.get("peak_time", ""),
+            "lead_time_days": pt.get("lead_time_days", ""),
+            "country": place.get("country", ""),
+            "region": place.get("region", ""),
+            "basin": place.get("basin", ""),
+            "sub_basin": place.get("sub_basin", ""),
+            "station": place.get("station", ""),
+            "river": place.get("river", ""),
+            "lat": la, "lon": lo,
+        })
+        rows.append(r)
+    return rows
+
+
+def _glofas_issued(stamp):
+    """`2026092300` -> `2026-09-23`. The hour is the forecast cycle, not a date."""
+    return f"{stamp[0:4]}-{stamp[4:6]}-{stamp[6:8]}" if len(stamp) >= 8 else ""
+
+
+def _glofas_points(folder):
+    """Reporting points keyed by their grid centre, for the attribute overlay.
+
+    Keyed on X/Y rather than Lat/Long: those are the point's position ON the
+    GloFAS river network — the grid cell it was drawn from — while Lat/Long is a
+    display position that can sit a few hundred metres off the cell centre.
     """
     from pyogrio.raw import read
 
-    meta, _m2, _geom, fields = read(path)
+    hits = glob.glob(os.path.join(folder, C.GLOFAS_POINTS_GLOB))
+    if not hits:
+        return {}
+    meta, _m2, _geom, fields = read(max(hits, key=os.path.getmtime))
     cols = dict(zip(list(meta["fields"]), fields))
-    missing = [c for c in ("ThresGroup", "Lat", "Long", "PointID", "ForecastDa", "PeakTime")
-               if c not in cols]
-    if missing:
-        sys.exit(f"{os.path.basename(path)} is missing column(s): {missing}")
+    if not {"X", "Y", "ThresGroup"} <= set(cols):
+        return {}
 
-    out = []
+    out = {}
     for i in range(len(cols["ThresGroup"])):
         try:
-            group = int(cols["ThresGroup"][i])
+            if int(cols["ThresGroup"][i]) <= 0:
+                continue                      # watched, but not alerting
         except (TypeError, ValueError):
             continue
-        sev = C.GLOFAS_SEVERITY.get(group)
-        if sev is None:
+        x, y = _f(cols["X"][i]), _f(cols["Y"][i])
+        if x is None or y is None:
             continue
-        lat, lon = _f(cols["Lat"][i]), _f(cols["Long"][i])
-        if lat is None or lon is None:
-            continue
-        issued = _s(cols["ForecastDa"][i])
-        r = blank_record()
-        r.update({
-            "model": "glofas", "severity": sev,
-            "native_id": _s(cols["PointID"][i]),
-            "return_period_yr": C.GLOFAS_RETURN_PERIOD[group],
-            # GloFAS publishes no discharge on the reporting points, and none of
-            # the companion rasters carry one either.
-            "peak_discharge_cms": "",
+        issued = _s(cols["ForecastDa"][i]) if "ForecastDa" in cols else ""
+        out[(round(y, 3), round(x, 3))] = {
+            "ups_area": (_f(cols["UpsArea"][i]) or 0.0) if "UpsArea" in cols else 0.0,
+            "native_id": _s(cols["PointID"][i]) if "PointID" in cols else "",
             "issued_time": issued,
-            "peak_time": _day_offset(issued, cols["PeakTime"][i], base=1),
+            "peak_time": _day_offset(issued, cols["PeakTime"][i], base=1)
+                         if "PeakTime" in cols else "",
             "lead_time_days": _int_or_blank(cols.get("LeadtimeH"), i),
             "country": _col(cols, "Country", i),
             "region": _col(cols, "Region", i, C.GLOFAS_PLACEHOLDERS),
@@ -201,9 +319,7 @@ def read_glofas(path):
             "sub_basin": _col(cols, "Sub-Basin", i, C.GLOFAS_PLACEHOLDERS),
             "station": _col(cols, "Station", i, C.GLOFAS_PLACEHOLDERS),
             "river": _col(cols, "River", i, C.GLOFAS_PLACEHOLDERS),
-            "lat": lat, "lon": lon,
-        })
-        out.append(r)
+        }
     return out
 
 

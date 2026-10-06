@@ -132,7 +132,9 @@ def write_csv(path, columns, rows):
 
 
 def main(release_dir=None):
-    out_dir = release_dir or os.path.join(C.OUTPUT_DIR, os.listdir(C.OUTPUT_DIR)[0])
+    out_dir = release_dir or C.latest_release()
+    if not out_dir:
+        sys.exit(f"No release folder under {C.OUTPUT_DIR}. Run step 2 first.")
     f_path = os.path.join(out_dir, "forecasts.csv")
     p_path = os.path.join(out_dir, "cell_forecasts.csv")
     for p in (f_path, p_path):

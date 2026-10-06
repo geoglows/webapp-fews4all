@@ -17,8 +17,8 @@ export function contextControl() {
     panelStyle: "padding:10px 12px;min-width:186px;font:600 12px system-ui,sans-serif;color:#0f172a",
     render(panel) {
       panel.innerHTML =
-        check("ctx-global-streams", "TDX-Hydro Streams", streamsOn(), "#2b7fd4") +
-        check("ctx-global-boundaries", "ADM Boundaries", boundariesOn(), "#475569") +
+        check("ctx-global-streams", "GEOGLOWS V3 Streams", streamsOn(), "#2b7fd4") +
+        check("ctx-global-boundaries", "ADM Boundaries", boundariesOn(), "#2b7fd4") +
         `<p style="font:400 11px system-ui,sans-serif;color:#94a3b8;margin:3px 0 0">` +
         `Detail follows the zoom: boundaries step from countries to regions to districts.</p>`;
 

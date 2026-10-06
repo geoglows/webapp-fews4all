@@ -23,6 +23,7 @@ export const DATA = {
   basins: BASE + "data_basins.geojson",
   h3: BASE + "data_h3cells.geojson",
   globalStreams: BASE + "data_streams.geojson",
-  boundaries: BASE + "data_boundaries.geojson",
+  // boundaries now come from backend/static/tiles/adm.pmtiles (see config.js
+  // ADM_TILES_URL); public/data_boundaries.geojson is no longer read.
   flash: BASE + "data_flash_floods.geojson",
 };

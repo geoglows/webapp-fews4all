@@ -76,3 +76,23 @@ export function boundsOf(features) {
   for (const f of features) if (f.geometry) walk(f.geometry.coordinates);
   return b;
 }
+
+// With world copies on, the map can sit at any longitude: panning east past the
+// antimeridian puts the viewer at 200 degrees, or 560, not back at -160. Our data
+// only exists once, in [-180, 180], so a camera move computed from it would pan
+// the whole world backwards to reach a cell the viewer is already looking at.
+//
+// This shifts a target longitude by whole turns into the copy nearest `near`
+// (normally the current map centre), so the move is always the short way round.
+export function nearestCopy(lng, near) {
+  return lng + 360 * Math.round((near - lng) / 360);
+}
+
+// The same, for a bounds built from source coordinates.
+export function boundsNear(b, near) {
+  if (b.isEmpty()) return b;
+  const shift = 360 * Math.round((near - (b.getWest() + b.getEast()) / 2) / 360);
+  if (!shift) return b;
+  return new LngLatBounds(
+    [b.getWest() + shift, b.getSouth()], [b.getEast() + shift, b.getNorth()]);
+}

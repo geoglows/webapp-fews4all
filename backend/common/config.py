@@ -18,6 +18,7 @@ and every step (and eventually the front end's rules file) reads the same values
 """
 
 import os
+import re
 
 HERE = os.path.dirname(os.path.abspath(__file__))     # backend/common
 BACKEND = os.path.dirname(HERE)                       # backend
@@ -42,7 +43,9 @@ RESOLUTIONS = [3, 4, 5, 6]        # ...then rolled up to, in step 3
 INPUT_GLOBS = {
     "geoglows": ["mapstyletable*.csv"],
     "flood_hub": ["world_flood_status*.csv", "Flood_Hub_Global*.csv"],
-    "glofas": ["RPG_U*.shp"],
+    # The 2-year grid. The other two levels sit beside it under the same stamp,
+    # and the reporting points (RPG_U*.shp) ride along as an attribute overlay.
+    "glofas": ["sumAL_medium_AL*.nc"],
     "flash": ["urban_flash_floods*.geojson"],
 }
 
@@ -59,6 +62,17 @@ GEOGLOWS_MIN_MEAN_FLOW = 5        # drop trickles that clear a return period on 
 FLOOD_HUB_SEVERITY = {"ABOVE_NORMAL": "warning", "SEVERE": "danger", "EXTREME": "extreme"}
 GLOFAS_SEVERITY = {1: "warning", 2: "danger", 3: "extreme"}
 GLOFAS_RETURN_PERIOD = {1: 2, 2: 5, 3: 20}
+# GloFAS issues its forecast as three global 0.05-degree fields, one per return
+# period, whose value is how many of the 51 ensemble members exceeded that
+# threshold. A pixel is flagged at the highest level reaching 30% of the ensemble
+# — 16 members — which is exactly what the reporting points encode as ThresGroup:
+# sampling these grids at all 4,122 point coordinates reproduces ThresGroup with
+# no exceptions, and the probabilities to within rounding.
+GLOFAS_ENSEMBLE = 51
+GLOFAS_ALERT_MEMBERS = 16
+GLOFAS_GRID_VAR = "sumAL"
+GLOFAS_GRID_LEVELS = {1: "medium", 2: "high", 3: "extreme"}
+GLOFAS_POINTS_GLOB = "RPG_U*.shp"      # the overlay, not a second source
 # The name columns are literal placeholders on the ~92% of GloFAS points that are
 # dynamic grid cells rather than gauged stations.
 GLOFAS_PLACEHOLDERS = {"not a station", "not found", "na", "n/a", "none", "-", "--"}
@@ -125,33 +139,52 @@ ADMIN_READ_BATCH = 4000    # polygons per streamed read, to keep memory flat
 # they are paint-only changes — but it chooses among the ones defined here rather
 # than inventing its own.
 PALETTES = [
-    # Matplotlib colormaps, sampled at 0.40 / 0.50 / 0.60 — a narrow slice through
-    # the middle of each map, so the three rungs share a hue family and differ
-    # mainly in tone. Lightness still rises with severity.
+    # Two families, deliberately kept apart.
     #
-    # Worth knowing what this costs: across the nine maps the closest pair of rungs
-    # is 10 ΔE apart (cividis) against 39 at the wider sampling this replaced. Below
-    # about 20 ΔE two colours are hard to separate at a glance, and a res-6 hexagon
-    # at world zoom is a small target. The sampling is a constant here, so widening
-    # it later is one edit and a rerun of step 5.
+    # The matplotlib perceptually uniform maps, sampled at 0.75 / 0.45 / 0.15 —
+    # note the descent: these maps run dark to light as their value rises, so
+    # reading them downwards is what puts the DARK end on `extreme`, matching the
+    # ColorBrewer schemes below.
+    #
+    # The span was widened at the same time. At the old 0.40 / 0.50 / 0.60 the
+    # closest pair of rungs was 2.7 dE apart on the map (cividis), which is at the
+    # edge of being distinguishable at all on a res-6 hexagon at world zoom; it is
+    # now 10.1 at worst and 29.6 at best. The ends stop short of the extremes on
+    # purpose: below about 0.15 inferno and magma go near-black (L* 7) and lose
+    # the hue that tells the ramps apart, and above about 0.75 the light end is
+    # pale enough to start washing out against the basemap at low fill.
     {"id": "viridis", "label": "Viridis",
-     "warning": "#2a788e", "danger": "#21918c", "extreme": "#22a884"},
+     "warning": "#5ec962", "danger": "#25848e", "extreme": "#463480"},
     {"id": "plasma", "label": "Plasma",
-     "warning": "#b12a90", "danger": "#cc4778", "extreme": "#e16462"},
+     "warning": "#f89540", "danger": "#bf3984", "extreme": "#5601a4"},
     {"id": "inferno", "label": "Inferno",
-     "warning": "#932667", "danger": "#bc3754", "extreme": "#dd513a"},
+     "warning": "#f98e09", "danger": "#a82e5f", "extreme": "#2b0b57"},
     {"id": "magma", "label": "Magma",
-     "warning": "#8c2981", "danger": "#b73779", "extreme": "#de4968"},
+     "warning": "#fc8961", "danger": "#a1307e", "extreme": "#251255"},
     {"id": "cividis", "label": "Cividis",
-     "warning": "#666970", "danger": "#7d7c78", "extreme": "#948e77"},
-    {"id": "winter", "label": "Winter",
-     "warning": "#0066cc", "danger": "#0080bf", "extreme": "#0099b2"},
-    {"id": "autumn", "label": "Autumn",
-     "warning": "#ff6600", "danger": "#ff8000", "extreme": "#ff9900"},
-    {"id": "spring", "label": "Spring",
-     "warning": "#ff6699", "danger": "#ff807f", "extreme": "#ff9966"},
-    {"id": "gist_heat", "label": "Heat",
-     "warning": "#990000", "danger": "#c00100", "extreme": "#e53300"},
+     "warning": "#bcae6c", "danger": "#727274", "extreme": "#243c6e"},
+
+    # ColorBrewer 3-class sequential (colorbrewer2.org), taken whole rather than
+    # sampled: these are published AS three classes, so the three rungs are the
+    # scheme, not a slice of it.
+    #
+    # They run the opposite way round — dark is worst. That is ColorBrewer's own
+    # convention, and here it is also the readable one: composited at the default
+    # 30% fill over a light basemap, the palest swatch sits 2.2 to 3.7 dE from the
+    # bare paper, which is at or below the threshold where a colour is visible at
+    # all. Putting that rung on `extreme` would make the most serious cells the
+    # hardest ones to see. On `warning` it costs nothing — the darkest swatch
+    # carries `extreme` at 18 to 26 dE, well clear.
+    {"id": "blues", "label": "Blues",
+     "warning": "#deebf7", "danger": "#9ecae1", "extreme": "#3182bd"},
+    {"id": "greens", "label": "Greens",
+     "warning": "#e5f5e0", "danger": "#a1d99b", "extreme": "#31a354"},
+    {"id": "oranges", "label": "Oranges",
+     "warning": "#fee6ce", "danger": "#fdae6b", "extreme": "#e6550d"},
+    {"id": "purples", "label": "Purples",
+     "warning": "#efedf5", "danger": "#bcbddc", "extreme": "#756bb1"},
+    {"id": "reds", "label": "Reds",
+     "warning": "#fee0d2", "danger": "#fc9272", "extreme": "#de2d26"},
 ]
 DEFAULT_PALETTE = "inferno"
 # Every model opens on the same palette. Models are told apart by the split-cell
@@ -161,9 +194,9 @@ MODEL_PALETTE = {
     "geoglows": "inferno",
     "flood_hub": "inferno",
     "glofas": "inferno",
-    "flash": "inferno",
+    "flash": "reds",
 }
-FLASH_PALETTE = "inferno"
+FLASH_PALETTE = "reds"
 MODEL_LABELS = {"geoglows": "GEOGLOWS", "flood_hub": "Flood Hub",
                 "glofas": "GloFAS", "flash": "Flash Floods"}
 
@@ -191,6 +224,27 @@ RES_ZOOM_STEP = 2
 # build wrote them. PMTiles is read with HTTP range requests, which the dev server
 # honours. For production, serve backend/static/tiles/ from somewhere real and
 # repoint this — it is the only place the archives are named.
+# ---- river network -------------------------------------------------------
+# Topology lifted out of the v3 stream tiles by static/build_stream_attrs.py, so
+# the daily run can tell a river reported twice from two rivers meeting, and both
+# from two rivers that never meet. The daily GEOGLOWS file carries none of this.
+STREAM_TILES_PATH = os.path.join(BACKEND, "static", "tiles", "streams.pmtiles")
+STREAM_ATTRS_CSV = os.path.join(BACKEND, "static", "stream_attrs.csv")
+# How far downstream to look when deciding whether two flagged reaches are the
+# same channel. Measured: same-channel pairs sat 1 to 4 reaches apart, so this has
+# headroom without being a licence to chain half a basin together.
+STREAM_CHAIN_HOPS = 8
+
+# ---- ADM boundaries ------------------------------------------------------
+# geoBoundaries CGAZ, three levels in one archive, one layer each. The zoom a
+# level takes over at is shared with the front end (layers/boundaries.js) so the
+# tiling bands and the telescoping cannot drift apart.
+ADM_DIR = os.path.join(FILES, "International_boundaries")
+ADM_LEVELS = [0, 1, 2]                      # countries, regions, districts
+ADM_ZOOM = {0: 0, 1: 4, 2: 7}               # minimum zoom each level is drawn at
+ADM_TILES_URL = "pmtiles:///backend/static/tiles/adm.pmtiles"
+ADM_SOURCE_LAYER = "adm{level}"             # distinct names, so a merge keeps them apart
+
 CELLS_TILES_URL = "pmtiles:///backend/static/tiles/cells.pmtiles"
 # One archive holds every resolution, each as its OWN named layer. The names have
 # to differ: the archives overlap at z4, z6 and z8, and layers sharing a name would
@@ -198,3 +252,20 @@ CELLS_TILES_URL = "pmtiles:///backend/static/tiles/cells.pmtiles"
 # tile with no way to tell them apart.
 CELLS_SOURCE_LAYER = "cells_r{res}"
 CELLS_PROMOTE_ID = "h3_id"        # feature-state (hover/selection) needs a stable id
+
+
+def latest_release(output_dir=None):
+    """The newest release folder under the output directory, or None.
+
+    Releases are named YYYY-MM-DD, so newest is last in sort order. Anything that
+    is not a release folder is ignored: steps 3 to 5 used to take whichever entry
+    the filesystem handed back first, and a stray .DS_Store sorts ahead of every
+    real release.
+    """
+    root = output_dir or OUTPUT_DIR
+    if not os.path.isdir(root):
+        return None
+    names = [n for n in os.listdir(root)
+             if re.fullmatch(r"\d{4}-\d{2}-\d{2}", n)
+             and os.path.isdir(os.path.join(root, n))]
+    return os.path.join(root, max(names)) if names else None

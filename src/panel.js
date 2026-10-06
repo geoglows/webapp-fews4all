@@ -2,7 +2,7 @@
 // Renders only; the actions its controls fire are injected by main.js, which keeps
 // the panel free of imports from the layers that call it.
 import {FIELD_LABELS, FLASH_MODELS, FLASH_TIER, FLASH_TIERS, MODEL_HOME, PANEL_MODELS, RIVER_ID_LABEL, SEVERITY, SEV_KEYS} from "./config.js";
-import {flashChanceLabel, flashNearLabel, fmtCount, fmtFlashIssued, fmtValue, modelLabel, modelLink, nearLabel, worstSeverity} from "./format.js";
+import {flashChanceLabel, flashNearLabel, fmtCount, fmtFlashIssued, fmtValue, inkOn, modelLabel, modelLink, nearLabel, worstSeverity} from "./format.js";
 import {flashFill, flashOutline, modelRamp, paletteColor, sevColor, unitLabel, view, visibleFlashModels, visibleModels, visibleSeverities, visibleTiers} from "./settings.js";
 import {icon} from "./icons.js";
 
@@ -98,8 +98,11 @@ export function renderPanel(props) {
   panelContent.hidden = false;
   const selected = !!props;
 
+  // The ink follows the fill: ramps now run dark-is-worse, so an `extreme` badge
+  // can be near-black and the fixed dark text on it was unreadable.
   const badge = (sev, color) =>
-    `<span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold capitalize text-[#10161d]" style="background:${color}">${sev || "—"}</span>`;
+    `<span class="inline-block px-2.5 py-0.5 rounded-full text-[11px] font-semibold capitalize" ` +
+    `style="background:${color};color:${inkOn(color)}">${sev || "—"}</span>`;
 
   // A chevron that collapses the section body with matching id (wired after render).
   const collapseBtn = (target, cls = "text-slate-400 hover:text-slate-600") =>
@@ -118,7 +121,9 @@ export function renderPanel(props) {
     const has = fcs.length > 0;
     const titleSpan =
       `<span class="flex items-center gap-1.5 font-semibold text-[13px] capitalize ${has ? "text-slate-100" : "text-slate-400"}">` +
-      icon("chart-bar", has ? "text-sky-300" : "text-slate-500") + modelTitle(m, fcs[0]) + `</span>`;
+      // A cluster of hexagons: what a river model actually puts on the map, and
+      // what tells these tiles apart from the flash ones at a glance.
+      icon("hexagon-2", has ? "text-sky-300" : "text-slate-500") + modelTitle(m, fcs[0]) + `</span>`;
     const hide = visibleModels.has(m) ? "" : " hidden";
     if (!has) {
       return `<div id="tile-river-${m}" class="bg-[#141e2a] border border-slate-700/60 rounded-[10px] px-3.5 py-2.5 mb-3${hide}">` +
@@ -159,6 +164,8 @@ export function renderPanel(props) {
     collapseBtn(target) + `</h2>`;
 
   // "All models"-style multi-select filter, shared by both sections.
+  // The sentinel the "All" row carries in place of a model key.
+  const ALL = "__all";
   const filterLabel = (models, set) => {
     const n = models.filter((m) => set.has(m)).length;
     return n === models.length ? "All models" : n === 0 ? "No models" : `${n} of ${models.length} models`;
@@ -169,6 +176,12 @@ export function renderPanel(props) {
     `<span class="flex items-center gap-1.5">${icon("funnel", "text-sky-500")}<span class="dd-label">${filterLabel(models, set)}</span></span>` +
     `<span class="dd-caret inline-flex transition-transform"${openFilters.has(kind) ? ` style="transform:rotate(180deg)"` : ""}>${icon("chevron-down", "text-slate-400")}</span></button>` +
     `<div class="dd-menu ${openFilters.has(kind) ? "" : "hidden "}absolute z-[1000] left-0 right-0 mt-1 rounded-lg border border-slate-200 bg-white shadow-lg p-1.5">` +
+    // "All" sits above the rule and carries no model of its own: it reads the
+    // others and writes to all of them. Indeterminate when the set is mixed, so
+    // the box shows three states rather than lying about a partial selection.
+    `<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 text-[13px] font-medium text-slate-700 cursor-pointer select-none">` +
+    `<input type="checkbox" data-model="${ALL}"${models.every((m) => set.has(m)) ? " checked" : ""} class="accent-sky-500 w-3.5 h-3.5">All</label>` +
+    `<div class="h-px bg-slate-200 my-1"></div>` +
     models.map((m) =>
       `<label class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-slate-50 text-[13px] text-slate-700 cursor-pointer select-none">` +
       `<input type="checkbox" data-model="${m}"${set.has(m) ? " checked" : ""} class="accent-sky-500 w-3.5 h-3.5">${modelLabel(m)}</label>`
@@ -281,15 +294,42 @@ export function renderPanel(props) {
       if (opening) openFilters.add(dd.dataset.kind);
       else openFilters.delete(dd.dataset.kind);
     });
-    dd.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    const allBox = dd.querySelector(`input[data-model="${ALL}"]`);
+    const boxes = [...dd.querySelectorAll("input[type=checkbox]")]
+      .filter((cb) => cb.dataset.model !== ALL);
+
+    // Applies ONE model's state everywhere it shows: the set, its panel tile and,
+    // for flash, its map layers. Shared so the "All" row and a single checkbox
+    // cannot diverge in what toggling means.
+    const applyModel = (m, on) => {
+      if (on) set.add(m); else set.delete(m);
+      const card = document.getElementById(`tile-${dd.dataset.kind}-${m}`);
+      if (card) card.classList.toggle("hidden", !on);
+      if (isFlash) (flashSetter[m] || (() => {}))(on);
+    };
+    const syncAll = () => {
+      if (!allBox) return;
+      const n = models.filter((m) => set.has(m)).length;
+      allBox.checked = n === models.length;
+      allBox.indeterminate = n > 0 && n < models.length;
+    };
+    syncAll();
+
+    if (allBox) allBox.addEventListener("change", () => {
+      const on = allBox.checked;
+      for (const m of models) applyModel(m, on);
+      for (const cb of boxes) cb.checked = on;
+      allBox.indeterminate = false;
+      label.textContent = filterLabel(models, set);
+      if (!isFlash) actions.refreshFeatures();
+    });
+
+    boxes.forEach((cb) => {
       cb.addEventListener("change", () => {
-        const m = cb.dataset.model;
-        if (cb.checked) set.add(m); else set.delete(m);
+        applyModel(cb.dataset.model, cb.checked);
+        syncAll();
         label.textContent = filterLabel(models, set);
-        const card = document.getElementById(`tile-${dd.dataset.kind}-${m}`);
-        if (card) card.classList.toggle("hidden", !cb.checked);
-        if (isFlash) (flashSetter[m] || (() => {}))(cb.checked);
-        else actions.refreshFeatures();
+        if (!isFlash) actions.refreshFeatures();
       });
     });
   });

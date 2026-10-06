@@ -49,7 +49,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from common import config as C          # noqa: E402
+from common import config as C
+from common import streams as S          # noqa: E402
 from common import models as M          # noqa: E402
 
 
@@ -164,7 +165,56 @@ def match_lines(records, crosswalk_path):
                 continue
             seen.add((cell, uid))
             pairs.append((cell, uid))
-    return pairs, (rows, dupes)
+
+    pairs, resolved = resolve_reaches(pairs, by_reach)
+    return pairs, (rows, dupes, resolved)
+
+
+def resolve_reaches(pairs, by_reach):
+    """Apply the river-network rules to cells holding more than one reach.
+
+    A hexagon is wider than a GEOGLOWS reach, so one routinely catches several
+    flagged ones — sometimes the same river twice, sometimes two rivers meeting,
+    sometimes two that never meet. common/streams.py holds the rules and the
+    evidence for them; this is just where they are applied to the day's pairs.
+
+    Reaches the attribute table does not know are kept untouched. A missing
+    topology must not silently delete a forecast.
+    """
+    net = S.Network().load()
+    if not net.ready:
+        print("  note: no stream attribute table; reaches left as matched "
+              f"(build it with static/build_stream_attrs.py)", file=sys.stderr)
+        return pairs, {}
+
+    uid_of = {}
+    by_cell = {}
+    for cell, uid in pairs:
+        by_cell.setdefault(cell, []).append(uid)
+    for reach, uid in by_reach.items():
+        rid = _reach_int(reach)
+        if rid is not None:
+            uid_of[uid] = rid
+
+    out, tally = [], {}
+    for cell, uids in by_cell.items():
+        ids = [uid_of.get(u) for u in uids]
+        if len(uids) < 2 or any(i is None for i in ids):
+            out.extend((cell, u) for u in uids)
+            continue
+        kept, droppedlist, reason = S.resolve_cell(ids, net)
+        if droppedlist:
+            tally[reason] = tally.get(reason, 0) + len(droppedlist)
+        keep = set(kept)
+        out.extend((cell, u) for u, i in zip(uids, ids) if i in keep)
+    return out, tally
+
+
+def _reach_int(reach):
+    try:
+        return int(float(reach))
+    except (TypeError, ValueError):
+        return None
 
 
 def write_csv(path, columns, rows):
@@ -230,12 +280,17 @@ def main(input_dir=None, output_dir=None, release=None):
         if not os.path.exists(C.CROSSWALK_CSV):
             sys.exit(f"Crosswalk not found: {C.CROSSWALK_CSV}")
         t0 = time.time()
-        lns, (rows, dupes) = match_lines(line_records, C.CROSSWALK_CSV)
+        lns, (rows, dupes, resolved) = match_lines(line_records, C.CROSSWALK_CSV)
         pairs.extend(lns)
         print(f"  lines      {len(lns):>6,} cell/forecast pair(s) from "
               f"{len(line_records):,} reach(es)  {time.time() - t0:.1f}s")
         print(f"             crosswalk: {rows:,} row(s) read, "
               f"{dupes:,} repeat crossing(s) collapsed")
+        if resolved:
+            total = sum(resolved.values())
+            detail = ", ".join(f"{k} {v:,}" for k, v in sorted(resolved.items()))
+            print(f"             network rules: {total:,} reach(es) dropped from "
+                  f"shared cells ({detail})")
 
     if not pairs:
         sys.exit("No forecast reached the grid — nothing to write.")

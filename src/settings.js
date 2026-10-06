@@ -15,13 +15,21 @@ import {darken} from "./format.js";
 // them in one place is the point — a default that lives only in the initialiser
 // drifts away from the "Restore defaults" button the first time either is edited.
 const DISPLAY_DEFAULTS = {
-  flashRampId: "inferno",
+  flashRampId: "reds",
   flashOpacity: 0.5,                // "highly likely" fill; "likely" scales off it
   flashOutlineOnly: false,
   hatchOn: false,                   // the concurrence hash; off until asked for
   outlineOnly: false,               // draw outlines, skip fills
   fillOpacity: 0.3,                 // resting fill opacity
+  // Flash polygons under the flagged cells. They are much the larger shape, so
+  // on top they bury the hexagons they overlap; underneath, both read.
+  flashAboveCells: false,
 };
+// Outline weight per severity, in pixels. Nested rather than flat so the three
+// read as one control, and copied rather than shared on every use — Object.assign
+// is shallow, so handing `view` the same object the defaults hold would let a
+// slider edit the thing "Restore defaults" restores from.
+const LINE_WIDTH_DEFAULTS = {warning: 1, danger: 1, extreme: 1};
 // Amber is the app's historic palette and every model opens on it. Deriving the
 // map from PANEL_MODELS means a model added there needs no second edit here.
 // Every model opens on this one. Models are distinguished by the split bands and
@@ -39,6 +47,7 @@ export const view = {
   currentDatasetKey: DEFAULT_DATASET,
   selectedBasinId: null,
   ...DISPLAY_DEFAULTS,
+  lineWidth: {...LINE_WIDTH_DEFAULTS},
 };
 
 export const modelRamp = Object.fromEntries(PANEL_MODELS.map((m) => [m, DEFAULT_RAMP]));
@@ -110,6 +119,7 @@ export const visibleTiers = new Set(FLASH_TIERS);
 // leave other modules pointing at the old one.
 export function restoreDisplayDefaults() {
   Object.assign(view, DISPLAY_DEFAULTS);
+  view.lineWidth = {...LINE_WIDTH_DEFAULTS};
   for (const m of PANEL_MODELS) modelRamp[m] = DEFAULT_RAMP;
   visibleSeverities.clear();
   for (const k of SEV_KEYS) visibleSeverities.add(k);

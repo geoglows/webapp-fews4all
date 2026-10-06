@@ -20,7 +20,7 @@ import "maplibre-gl/dist/maplibre-gl.css";  // MapLibre's own stylesheet (from n
 import {DATASETS} from "./config.js";
 import {RELEASE_BASE} from "./sources.js";
 import {loadRelease} from "./release.js";
-import {map} from "./map.js";
+import {map, registerPanelFocus} from "./map.js";
 import {view, visibleFlashModels} from "./settings.js";
 import * as panel from "./panel.js";
 import * as cells from "./layers/cells_tiles.js";
@@ -54,6 +54,14 @@ cells.init({
   onSelect: (cell, forecasts) => panel.renderPanel({...cell, forecasts}),
   onClear: () => panel.renderPanel(null),
 });
+
+// Which section the panel reveals after a click. Registered here rather than in
+// the layers, so neither of them has to import the panel. When a click lands on
+// both a flagged cell and a flash polygon, map.js prefers "flash": it is the more
+// specific thing on screen — a river cell is a 36 km2 hexagon, a flash polygon is
+// the actual area forecast to flood.
+registerPanelFocus("cells", () => panel.scrollPanelToSection("section-river"));
+registerPanelFocus("flash", () => panel.scrollPanelToSection("section-flash"));
 
 display.init({onDisplayChange: applyDisplaySettings});
 

@@ -20,6 +20,23 @@ export function darken(hex, f = 0.55) {
   const c = (sh) => Math.round(((n >> sh) & 255) * f).toString(16).padStart(2, "0");
   return "#" + c(16) + c(8) + c(0);
 }
+// Ink that stays readable on `hex`. Relative luminance per WCAG: channels are
+// linearised before weighting, because sRGB is gamma encoded and averaging the
+// raw bytes overrates dark colours badly — #2b0b57 (inferno's `extreme`) reads
+// as mid-grey on a naive average and as near-black here, which is the difference
+// between illegible dark text and white.
+//
+// The 0.36 cut is where white and the near-black ink swap places for contrast
+// ratio against this palette; it sits between the darkest rung any ramp puts on
+// `danger` and the lightest it puts on `extreme`.
+export function inkOn(hex, dark = "#10161d", light = "#ffffff") {
+  if (!hex || hex[0] !== "#" || hex.length < 7) return dark;
+  const n = parseInt(hex.slice(1, 7), 16);
+  const lin = (v) => (v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+  const [r, g, b] = [16, 8, 0].map((sh) => lin(((n >> sh) & 255) / 255));
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b > 0.36 ? dark : light;
+}
+
 // Chance label from polygon_type ("likely" -> "Likely"), via the shared legend.
 export const flashChanceLabel = (t) => (FLASH_TIER[t] || {}).label || t || "—";
 

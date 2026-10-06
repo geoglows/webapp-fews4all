@@ -6,6 +6,7 @@ import {applyFillStyle} from "../layers/cells_tiles.js";
 import {applyFlashStyle} from "../layers/flash.js";
 import {dropdownControl} from "../ui/dropdown.js";
 import {modelLabel} from "../format.js";
+import {applyLayerOrder} from "../map.js";
 import {modelRamp, palettes, paletteColor, restoreDisplayDefaults, view, visibleSeverities, visibleTiers} from "../settings.js";
 
 // main.js injects what a settings change should trigger, so this control never
@@ -52,17 +53,29 @@ const paletteSample = (id) =>
   `</span>`;
 
 // model name | sample | the list of palettes by name
-function rampRow(key, label, current) {
+// The sentinel the "All models" row carries in place of a model key.
+const ALL_MODELS = "__all";
+
+// `current` null means the models disagree: no ramp is selected and the sample
+// is blank, so the row reports a mixed state instead of claiming one of them.
+function rampRow(key, label, current, bold) {
   return `<div style="display:flex;align-items:center;gap:6px;margin-bottom:6px">` +
     `<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;` +
-    `text-overflow:ellipsis">${label}</span>` +
-    paletteSample(current) +
+    `text-overflow:ellipsis${bold ? ";font-weight:600" : ""}">${label}</span>` +
+    (current ? paletteSample(current) : `<span style="width:34px"></span>`) +
     `<select class="ramp-select" data-key="${key}" style="font:inherit;padding:2px 4px;` +
     `border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#0f172a;cursor:pointer">` +
+    (current ? "" : `<option value="" selected disabled>Mixed</option>`) +
     palettes.map((p) =>
       `<option value="${p.id}"${p.id === current ? " selected" : ""}>${p.label}</option>`).join("") +
     `</select></div>`;
 }
+
+// The ramp every model shares, or null when they differ.
+const sharedRamp = (keys) => {
+  const first = modelRamp[keys[0]];
+  return keys.every((m) => modelRamp[m] === first) ? first : null;
+};
 
 const head = (t) =>
   `<div style="font-size:10px;color:#64748b;text-transform:uppercase;` +
@@ -72,10 +85,25 @@ const check = (id, label, on, accent) =>
   `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:3px">` +
   `<input type="checkbox" id="${id}"${on ? " checked" : ""} ` +
   `style="accent-color:${accent || "#0284c7"}">${label}</label>`;
+// One row per severity: whether it is drawn at all, and how heavy its outline is.
+// These were two separate blocks asking about the same three things, which meant
+// reading the rung name twice to change both. px rather than % on the weight,
+// because px is what MapLibre takes.
+const severityRow = (k, label, shown, width) =>
+  `<div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">` +
+  `<label style="display:flex;align-items:center;gap:6px;width:76px;cursor:pointer;` +
+  `white-space:nowrap">` +
+  `<input type="checkbox" id="disp-sev-${k}"${shown ? " checked" : ""} ` +
+  `style="accent-color:#0284c7">${label}</label>` +
+  `<input type="range" id="disp-lw-${k}" min="0" max="5" step="0.1" value="${width}" ` +
+  `style="flex:1;accent-color:#0284c7;cursor:pointer" title="Outline weight, px">` +
+  `<span id="disp-lw-${k}-val" style="width:26px;text-align:right;color:#64748b">` +
+  `${Number(width).toFixed(1)}</span></div>`;
+
 const slider = (id, value) =>
   `<label style="display:flex;align-items:center;gap:7px;margin-bottom:4px">` +
   `<span style="white-space:nowrap">Fill</span>` +
-  `<input type="range" id="${id}" min="0" max="80" step="5" value="${Math.round(value * 100)}" ` +
+  `<input type="range" id="${id}" min="0" max="100" step="5" value="${Math.round(value * 100)}" ` +
   `style="flex:1;accent-color:#0284c7;cursor:pointer">` +
   `<span id="${id}-val" style="width:30px;text-align:right;color:#64748b">` +
   `${Math.round(value * 100)}%</span></label>`;
@@ -87,15 +115,18 @@ function areasTab() {
   // an option that 404s is worse than no option. It comes back when basins are
   // rebuilt on the new backend.
   return head("Appearance") +
+    rampRow(ALL_MODELS, "All models", sharedRamp(PANEL_MODELS), true) +
     PANEL_MODELS.map((m) => rampRow(m, modelLabel(m), modelRamp[m])).join("") +
     slider("disp-opacity", view.fillOpacity) +
-    check("disp-outline", "Outline only", view.outlineOnly) + rule +
+    check("disp-outline", "Outline only", view.outlineOnly) +
+    check("disp-flash-above", "Flash floods above cells", view.flashAboveCells) + rule +
+
+    head("Severity &nbsp;·&nbsp; shown and outline weight") +
+    SEV_KEYS.map((k) =>
+      severityRow(k, SEVERITY[k].label, visibleSeverities.has(k), view.lineWidth[k])).join("") + rule +
 
     head("Highlight") +
-    check("disp-hatch", "Hatch where models concur", view.hatchOn) + rule +
-
-    head("Severity shown") +
-    SEV_KEYS.map((k) => check("disp-sev-" + k, SEVERITY[k].label, visibleSeverities.has(k))).join("");
+    check("disp-hatch", "Hatch where models concur", view.hatchOn);
 }
 
 function flashTab() {
@@ -120,7 +151,7 @@ export function displayControl() {
   return dropdownControl({
     iconName: "monitor",
     title: "Display Options",
-    panelStyle: "padding:10px 12px;width:286px;max-height:min(560px,calc(100vh - 150px));" +
+    panelStyle: "padding:10px 12px;width:330px;max-height:min(560px,calc(100vh - 150px));" +
       "overflow-y:auto;font:600 12px system-ui,sans-serif;color:#0f172a",
     render(panel) {
       // The tab bar is rendered once; only the body below it is swapped, so the
@@ -161,12 +192,20 @@ export function displayControl() {
 
         body.querySelectorAll(".ramp-select").forEach((sel) => sel.addEventListener("change", () => {
           const key = sel.dataset.key;
-          if (key === "flash") view.flashRampId = sel.value; else modelRamp[key] = sel.value;
+          if (key === ALL_MODELS) for (const m of PANEL_MODELS) modelRamp[m] = sel.value;
+          else if (key === "flash") view.flashRampId = sel.value;
+          else modelRamp[key] = sel.value;
           renderTab();                    // the sample beside the picker follows
           actions.onDisplayChange();      // the map and the panel's legends
         }));
 
         // --- areas tab ---
+        const above = $("#disp-flash-above");
+        if (above) above.addEventListener("change", (e) => {
+          view.flashAboveCells = e.target.checked;
+          applyLayerOrder();            // restack; nothing repaints or refetches
+        });
+
         const hatch = $("#disp-hatch");
         if (hatch) hatch.addEventListener("change", (e) => {
           view.hatchOn = e.target.checked;
@@ -178,6 +217,17 @@ export function displayControl() {
           if (!cb) return;
           cb.addEventListener("change", (e) => {
             if (e.target.checked) visibleSeverities.add(k); else visibleSeverities.delete(k);
+            actions.onDisplayChange();
+          });
+        });
+
+        SEV_KEYS.forEach((k) => {
+          const range = $("#disp-lw-" + k);
+          if (!range) return;
+          const readout = body.querySelector("#disp-lw-" + k + "-val");
+          range.addEventListener("input", () => {
+            view.lineWidth[k] = Number(range.value);
+            if (readout) readout.textContent = Number(range.value).toFixed(1);
             actions.onDisplayChange();
           });
         });

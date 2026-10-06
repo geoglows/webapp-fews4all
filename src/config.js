@@ -17,22 +17,30 @@ export const HASH_COLOR = "#0f172a";   // neutral dark for the multi-model legen
 // ---- Colour ramps ---------------------------------------------------------
 // One ramp = three shades, light (warning) to dark (extreme). A ramp is picked
 // per model, so GEOGLOWS and Flood Hub can be told apart at a glance; the flash
-// overlay takes its two tiers from the light and dark ends of its own ramp.
-// "Amber" is the app's historic palette and stays the default everywhere, so
-// the map opens looking as it always has until a ramp is changed.
+// overlay takes its two tiers from the MIDDLE and dark ends of its own ramp —
+// "likely" on the middle rung rather than the lightest, which on a 3-class
+// ColorBrewer scheme is close to invisible over the basemap.
+//
 // What the app shows before a release has loaded. The backend owns the real list
-// (palettes.csv) and settings.setPalettes swaps it in; these exist so the Display
-// menu and the panel legends are never empty during that first moment.
+// (backend/common/config.py PALETTES -> palettes.csv) and settings.setPalettes
+// swaps it in; these exist so the Display menu and the panel legends are never
+// empty during that first moment. Keep the two lists in step — a ramp missing
+// here flashes a wrong colour for the moment before the release arrives.
+//
+// All ten run the same way: darker is worse. The matplotlib maps are sampled
+// downwards (0.75 / 0.45 / 0.15) to get there, since they brighten as their
+// value rises; the ColorBrewer 3-class schemes are taken whole and already do.
 export const RAMPS = [
-  {id: "viridis", label: "Viridis", warning: "#2a788e", danger: "#21918c", extreme: "#22a884"},
-  {id: "plasma", label: "Plasma", warning: "#b12a90", danger: "#cc4778", extreme: "#e16462"},
-  {id: "inferno", label: "Inferno", warning: "#932667", danger: "#bc3754", extreme: "#dd513a"},
-  {id: "magma", label: "Magma", warning: "#8c2981", danger: "#b73779", extreme: "#de4968"},
-  {id: "cividis", label: "Cividis", warning: "#666970", danger: "#7d7c78", extreme: "#948e77"},
-  {id: "winter", label: "Winter", warning: "#0066cc", danger: "#0080bf", extreme: "#0099b2"},
-  {id: "autumn", label: "Autumn", warning: "#ff6600", danger: "#ff8000", extreme: "#ff9900"},
-  {id: "spring", label: "Spring", warning: "#ff6699", danger: "#ff807f", extreme: "#ff9966"},
-  {id: "gist_heat", label: "Heat", warning: "#990000", danger: "#c00100", extreme: "#e53300"},
+  {id: "viridis", label: "Viridis", warning: "#5ec962", danger: "#25848e", extreme: "#463480"},
+  {id: "plasma", label: "Plasma", warning: "#f89540", danger: "#bf3984", extreme: "#5601a4"},
+  {id: "inferno", label: "Inferno", warning: "#f98e09", danger: "#a82e5f", extreme: "#2b0b57"},
+  {id: "magma", label: "Magma", warning: "#fc8961", danger: "#a1307e", extreme: "#251255"},
+  {id: "cividis", label: "Cividis", warning: "#bcae6c", danger: "#727274", extreme: "#243c6e"},
+  {id: "blues", label: "Blues", warning: "#deebf7", danger: "#9ecae1", extreme: "#3182bd"},
+  {id: "greens", label: "Greens", warning: "#e5f5e0", danger: "#a1d99b", extreme: "#31a354"},
+  {id: "oranges", label: "Oranges", warning: "#fee6ce", danger: "#fdae6b", extreme: "#e6550d"},
+  {id: "purples", label: "Purples", warning: "#efedf5", danger: "#bcbddc", extreme: "#756bb1"},
+  {id: "reds", label: "Reds", warning: "#fee0d2", danger: "#fc9272", extreme: "#de2d26"},
 ];
 
 
@@ -122,7 +130,7 @@ export const FLASH_TIERS = ["likely", "highly_likely"];
 // the single opacity slider: at the default 0.5 they reproduce exactly the fixed
 // opacities the overlay shipped with (0.32/0.55 and 0.50/0.72).
 export const FLASH_TIER = {
-  likely: {label: "Likely", sev: "warning", dashed: true,
+  likely: {label: "Likely", sev: "danger", dashed: true,
     fillMul: 0.64, selMul: 1.72, lineWidth: 1.1, selWidth: 3},
   highly_likely: {label: "Highly likely", sev: "extreme", dashed: false,
     fillMul: 1, selMul: 1.44, lineWidth: 1.8, selWidth: 3.5},
@@ -201,26 +209,48 @@ export const STREAM_ZOOM_SCALE = [[3, 0.25], [7, 0.5], [12, 1], [16, 2.2]];
 // The network's own fade at low zoom, so it sits back behind the flagged cells.
 export const STREAM_OPACITY = [[3, 0.65], [9, 0.95]];
 
-// Administrative boundaries: one source, a hit-target fill under a thin outline.
+// Administrative boundaries: one tile archive holding all three levels as named
+// layers, each a hit-target fill under a thin outline. The zoom each level takes
+// over at is the same table backend/common/config.py tiles to, so the bands the
+// archive was cut for and the bands it is drawn at cannot drift apart.
 export const BOUNDARIES_SRC = "boundaries-src";
-export const BOUNDARY_FILL = "boundaries-fill";
-export const BOUNDARY_LINE = "boundaries-line";
+export const ADM_TILES_URL = "pmtiles:///backend/static/tiles/adm.pmtiles";
+export const ADM_LEVELS = [0, 1, 2];
+export const ADM_ZOOM = {0: 0, 1: 4, 2: 7};
+export const ADM_LABEL = ["Country", "Region", "District"];
+export const ADM_SOURCE_LAYER = (level) => `adm${level}`;
+export const ADM_FILL = (level) => `boundaries-fill-${level}`;
+export const ADM_LINE = (level) => `boundaries-line-${level}`;
 export const BOUNDARY_COLOR = "#475569";
 // geoBoundaries is CC BY 4.0, so this credit is a licence condition, not a courtesy.
-export const BOUNDARY_ATTRIBUTION =
+export const ADM_ATTRIBUTION =
   'Boundaries: <a href="https://www.geoboundaries.org">geoBoundaries CGAZ</a> (CC BY 4.0)';
 
-// Top to bottom. The global backdrops sit at the bottom of the group — boundaries
-// and the river network are reference, so the flagged cells and every per-basin
-// overlay draw over them.
-export const LAYER_ORDER = [
-  "ctx-streams-line", "ctx-streams-casing",
-  "ctx-districts-line", "ctx-districts-casing", "ctx-districts-fill",
-  "flash-line-high", "flash-fill-high", "flash-line-likely", "flash-fill-likely",
-  LINE, HASH, FILL,
-  BOUNDARY_LINE, BOUNDARY_FILL,
-  ...STREAMS_LAYERS,
-];
+// Top to bottom, in named groups so the stack can be rearranged at runtime
+// rather than being one frozen list. The global backdrops sit at the bottom —
+// boundaries and the river network are reference, so the flagged areas draw over
+// them — and the two flood groups swap by preference (Display -> Flash floods
+// above cells).
+//
+// The cell layers are NOT listed: there is one set per resolution, created from
+// whatever the release declares, so they are collected from the map by name at
+// the moment the order is applied. A static list went stale the moment the cells
+// moved into vector tiles, and silently stopped ordering them at all.
+export const LAYER_GROUPS = {
+  contextTop: [
+    "ctx-streams-line", "ctx-streams-casing",
+    "ctx-districts-line", "ctx-districts-casing", "ctx-districts-fill",
+  ],
+  flash: ["flash-line-high", "flash-fill-high", "flash-line-likely", "flash-fill-likely"],
+  backdrop: [
+    ...[...ADM_LEVELS].sort((a, b) => b - a).flatMap((l) => [ADM_LINE(l), ADM_FILL(l)]),
+    ...STREAMS_LAYERS,
+  ],
+};
+// Within one resolution: outline on top, then the hatch, the split bands, and the
+// tile fill at the bottom — the order they are created in, stated so it survives
+// a re-sort.
+export const CELL_LAYER_KINDS = ["cells-line", "cells-hash", "cells-split", "cells-fill"];
 
 // ---- Basin context: streams + districts (MapLibre sources/layers) ---------
 

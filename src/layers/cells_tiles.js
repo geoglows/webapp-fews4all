@@ -27,8 +27,8 @@
 //   simply stops requesting one archive and starts requesting the next.
 import {cellToBoundary, cellToLatLng} from "h3-js";
 import {DEFAULT_COLOR, EMPTY_FC, SEV_KEYS} from "../config.js";
-import {applyLayerOrder, map, tooltip, updateResReadout} from "../map.js";
-import {clipToBand, lonRange} from "../geometry.js";
+import {applyLayerOrder, map, registerPointerSource, registerTooltipLayers, updateResReadout} from "../map.js";
+import {clipToBand, lonRange, nearestCopy} from "../geometry.js";
 import {darken, modelLabel, worstSeverity} from "../format.js";
 import {modelRamp, paletteColor, setModelPalettes, setPalettes, view, visibleModels, visibleSeverities} from "../settings.js";
 
@@ -142,21 +142,25 @@ function lineColorExpr() {
 // Border weight carries severity alongside colour. With the palettes sampled
 // through a narrow band the three rungs are close in tone, so the outline is doing
 // real work here rather than decoration: an extreme cell reads as heavier even
-// where its fill is hard to separate from a warning's.
-const SEVERITY_WIDTH = {warning: 0.6, danger: 1.3, extreme: 2.2};
-const OUTLINE_ONLY_WIDTH = {warning: 1.4, danger: 2.2, extreme: 3};
+// where its fill is hard to separate from a warning's. The weights are the
+// viewer's to set (Display -> Outline weight); only the fallbacks for a cell with
+// no severity yet, and the outline-only boost, are fixed here.
+// With no fill to carry the signal, outline-only mode needs every rung heavier.
+// A constant rather than a multiplier: it keeps the RATIO the viewer set on the
+// sliders, where scaling would stretch the gap between rungs as well.
+const OUTLINE_ONLY_BOOST = 0.8;
 
-function severityWidth(byRung, fallback) {
+function severityWidth(byRung, fallback, boost = 0) {
   const expr = ["match", ["coalesce", ["feature-state", "severity"], ""]];
-  for (const k of SEV_KEYS) expr.push(k, byRung[k]);
+  for (const k of SEV_KEYS) expr.push(k, (byRung[k] || 0) + boost);
   expr.push(fallback);
   return expr;
 }
 
 function lineWidthExpr() {
   const base = view.outlineOnly
-    ? severityWidth(OUTLINE_ONLY_WIDTH, 2)
-    : severityWidth(SEVERITY_WIDTH, 1);
+    ? severityWidth(view.lineWidth, 2, OUTLINE_ONLY_BOOST)
+    : severityWidth(view.lineWidth, 1);
   return ["case",
     ["boolean", ["feature-state", "selected"], false], 4,
     ["boolean", ["feature-state", "hover"], false], 3,
@@ -200,6 +204,11 @@ function paintFor(res) {
 }
 
 // ---- hatch ------------------------------------------------------------------
+
+// Whether the concurrence hatch draws at all. One definition, read both when the
+// layer is built and whenever the display settings change, so the two can never
+// disagree about a setting that starts out off.
+const hashVisibility = () => (view.hatchOn && !view.outlineOnly ? "visible" : "none");
 
 function makeHashImage(color, size = 16, w = 2) {
   const cv = document.createElement("canvas");
@@ -386,6 +395,12 @@ export function build(rel) {
       "source-layer": layer["source-layer"],
       minzoom: layer.minzoom, ...(layer.maxzoom ? {maxzoom: layer.maxzoom} : {}),
       filter: ["in", ["get", "h3_id"], ["literal", agreeingIds(res)]],
+      // Stated at creation, not left to MapLibre's default of "visible". The
+      // hatch is off by default, but refresh() is what used to apply that, and
+      // refresh() does not run until something changes — so the hatch drew on
+      // first load with its own checkbox unticked, and ticking it twice was the
+      // only way to clear it.
+      layout: {visibility: hashVisibility()},
       paint: paint[hashId(res)],
     });
 
@@ -396,6 +411,11 @@ export function build(rel) {
       filter: layer.filter,
       paint: paint[lineId(res)],
     });
+
+    // The two hit targets this resolution answers hover on: the tile fill and the
+    // bands drawn over split cells. Registering them is what makes the boundary
+    // label stand down here.
+    registerTooltipLayers(fillId(res), splitId(res));
   }
 
   // The join runs once per source, when that source first has data. Feature
@@ -494,7 +514,9 @@ function drillToFinest(id) {
   let centre;
   try {
     const [lat, lng] = cellToLatLng(id);
-    centre = [lng, lat];
+    // The cell's longitude is its real one; the viewer may be several world
+    // copies away from it. Move to the copy they are in, not back across the map.
+    centre = [nearestCopy(lng, map.getCenter().lng), lat];
   } catch {
     return;
   }
@@ -527,44 +549,52 @@ function bindInteractions() {
     })
     .filter((id) => map.getLayer(id));
 
-  map.on("mousemove", (e) => {
-    const hits = map.queryRenderedFeatures(e.point, {layers: hitLayers()});
-    const f = hits[0];
-    if (!f) { map.getCanvas().style.cursor = ""; setHover(null); tooltip.remove(); return; }
-    map.getCanvas().style.cursor = "pointer";
-    const res = Number(String(f.layer.id).split("-").pop());
-    const id = f.properties.h3_id;
-    setHover({res, id});
-    const cell = release.cellAt(res, id);
-    const fcs = visibleForecasts(res, id);
-    if (!cell || !fcs.length) { tooltip.remove(); return; }
-    // Which models are flagging here, and how badly. The cell id told the reader
-    // nothing — it is an opaque token — whereas the model names are the one thing
-    // a hover can usefully answer, and on a concurrence cell they are the point.
-    const names = Object.keys(modelRamp)
-      .filter((m) => fcs.some((f) => f.model === m))
-      .map(modelLabel)
-      .join(" + ");
-    tooltip.setLngLat(e.lngLat)
-      .setHTML(`${names} · <b>${worstSeverity(fcs)}</b>`)
-      .addTo(map);
-  });
+  registerPointerSource({
+    key: "cells",
+    layers: hitLayers,
+    hover(hits) {
+      const f = hits[0];
+      if (!f) { setHover(null); return ""; }
+      const res = Number(String(f.layer.id).split("-").pop());
+      const id = f.properties.h3_id;
+      setHover({res, id});
+      const cell = release.cellAt(res, id);
+      const fcs = visibleForecasts(res, id);
+      if (!cell || !fcs.length) return "";
+      // Which models are flagging here, and how badly. The cell id told the
+      // reader nothing — it is an opaque token — whereas the model names are the
+      // one thing a hover can usefully answer, and on a concurrence cell they
+      // are the point.
+      const names = Object.keys(modelRamp)
+        .filter((m) => fcs.some((x) => x.model === m))
+        .map(modelLabel)
+        .join(" + ");
+      return `${names} · <b>${worstSeverity(fcs)}</b>`;
+    },
+    click(hits) {
+      const f = hits[0];
+      if (!f) { clearSelection(); return null; }
+      const res = Number(String(f.layer.id).split("-").pop());
+      const id = f.properties.h3_id;
+      if (!visibleForecasts(res, id).length) { clearSelection(); return null; }
 
-  map.on("click", (e) => {
-    const hits = map.queryRenderedFeatures(e.point, {layers: hitLayers()});
-    if (!hits.length) { clearSelection(); return; }
-    const f = hits[0];
-    const res = Number(String(f.layer.id).split("-").pop());
-    const id = f.properties.h3_id;
-    if (!visibleForecasts(res, id).length) { clearSelection(); return; }
-
-    // Only the finest resolution reports. A coarse cell holds every forecast
-    // beneath it, spread over an area far larger than any one of them describes,
-    // so filling the panel from it would attribute a specific reading to a place
-    // it was never about. Clicking one drills in instead, and the panel fills
-    // once the click lands on a cell fine enough to mean something.
-    if (res !== finestRes()) { clearSelection(); drillToFinest(id); return; }
-    selectCell(res, id);
+      // Only the finest resolution reports. A coarse cell holds every forecast
+      // beneath it, spread over an area far larger than any one of them
+      // describes, so filling the panel from it would attribute a specific
+      // reading to a place it was never about. Clicking one drills in instead,
+      // and the panel fills once the click lands on a cell fine enough to mean
+      // something.
+      // A drill claims the camera without filling the panel: nothing is reported
+      // yet, but the move toward the finest band has to survive whatever else was
+      // under the cursor.
+      if (res !== finestRes()) {
+        clearSelection();
+        drillToFinest(id);
+        return {panel: false, camera: true};
+      }
+      selectCell(res, id);
+      return {panel: true, camera: true};
+    },
   });
 
   map.on("zoomend", () => updateResReadout(currentRes()));
@@ -594,8 +624,7 @@ export function refresh({rejoin = true} = {}) {
       }
     }
     if (map.getLayer(hashId(res))) {
-      map.setLayoutProperty(hashId(res), "visibility",
-        view.hatchOn && !view.outlineOnly ? "visible" : "none");
+      map.setLayoutProperty(hashId(res), "visibility", hashVisibility());
       if (rejoin) map.setFilter(hashId(res), ["in", ["get", "h3_id"], ["literal", agreeingIds(res)]]);
     }
     if (rejoin) applyState(res);
