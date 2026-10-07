@@ -1,6 +1,6 @@
 // Pure helpers: value formatting, human labels, deep links, severity ranking, and
 // the colour maths. Depends only on config.js, so it is safe to import anywhere.
-import {FLASH_TIER, LINK_ZOOM, MODEL_LABELS, SEVERITY} from "./config.js";
+import {FILL_PREFIX, FLASH_TIER, LINK_ZOOM, MODEL_LABELS, SEVERITY} from "./config.js";
 
 // The model whose forecast set the cell's worst severity — it owns the colour
 // of an undivided cell. Ties go to the first model in PANEL_MODELS order.
@@ -138,11 +138,24 @@ export function modelLink(fc) {
   }
   if (m === "flood_hub") {
     // /l/{lat}/{lng}/{zoom}[/g/{gaugeId}] — the id pins the specific gauge.
+    // `riverId` was the camelCase name of a retired contract and was always
+    // undefined here, so every Flood Hub tile linked to the bare coordinate. The
+    // delivered column is `native_id`; on a FILLED cell that names the gauge the
+    // fill came from, which is the gauge this link should open either way.
     const base = `https://sites.research.google/floods/l/${lat}/${lon}/${LINK_ZOOM.flood_hub}`;
-    return fc.riverId ? `${base}/g/${encodeURIComponent(fc.riverId)}` : base;
+    const gauge = fillSource(fc) || String(fc.native_id || "").trim();
+    return gauge ? `${base}/g/${encodeURIComponent(gauge)}` : base;
   }
   // GloFAS has no per-point URL scheme; the caller falls back to MODEL_HOME.
   return null;
+}
+
+// The gauge a filled Flood Hub cell was inferred from, or null for a real gauge.
+// A filled cell is not a gauge and must not read as one: it is a statement about
+// the river between two warned gauges, carried downstream from the upstream one.
+export function fillSource(fc) {
+  const id = String((fc && fc.native_id) || "");
+  return id.startsWith(FILL_PREFIX) ? id.slice(FILL_PREFIX.length).trim() || null : null;
 }
 
 export function worstSeverity(forecasts) {

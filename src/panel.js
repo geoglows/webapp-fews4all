@@ -2,7 +2,7 @@
 // Renders only; the actions its controls fire are injected by main.js, which keeps
 // the panel free of imports from the layers that call it.
 import {FIELD_LABELS, FLASH_MODELS, FLASH_TIER, FLASH_TIERS, MODEL_HOME, PANEL_MODELS, RIVER_ID_LABEL, SEVERITY, SEV_KEYS} from "./config.js";
-import {flashChanceLabel, flashNearLabel, fmtCount, fmtFlashIssued, fmtValue, inkOn, modelLabel, modelLink, nearLabel, worstSeverity} from "./format.js";
+import {fillSource, flashChanceLabel, flashNearLabel, fmtCount, fmtFlashIssued, fmtValue, inkOn, modelLabel, modelLink, nearLabel, worstSeverity} from "./format.js";
 import {flashFill, flashOutline, modelRamp, paletteColor, sevColor, unitLabel, view, visibleFlashModels, visibleModels, visibleSeverities, visibleTiers} from "./settings.js";
 import {icon} from "./icons.js";
 
@@ -136,17 +136,35 @@ export function renderPanel(props) {
       `<div class="flex items-center justify-between gap-2 mb-1.5">${titleSpan}` +
       collapseBtn(bodyId, "text-slate-400 hover:text-slate-200") + `</div>`;
     const body = fcs.map((fc, i) => {
+      // A Flood Hub cell the pipeline INFERRED rather than gauged. Flood Hub warns
+      // at points, so the river between two warned gauges would otherwise be blank;
+      // the backend walks HydroRIVERS between them and carries the upstream gauge's
+      // forecast down the span. Every row below therefore describes that gauge, not
+      // this hexagon — a cell at the far end of a 200-cell span is a long way from
+      // it — so the id and the "Near" row are relabelled to say whose numbers these
+      // are, and the tile carries a line explaining why there is no gauge here.
+      const from = fillSource(fc);
       const rows = FIELD_LABELS.map(([k, label]) => {
-        const lbl = k === "native_id" ? (RIVER_ID_LABEL[m] || label) : label;
+        let lbl = k === "native_id" ? (RIVER_ID_LABEL[m] || label) : label;
+        if (from && k === "native_id") lbl = "Filled from";
+        if (from && k === "district") lbl = "Gauge near";
         const dt = `<dt class="text-slate-400">${lbl}</dt>`;
         if (k === "severity")
           return `${dt}<dd class="m-0">${badge(fc.severity, sevColor(fc.severity, m))}</dd>`;
-        const val = k === "district"
-          ? nearLabel(fc.district, fc.district_count, fc.country, fc.district_level)
-          : fmtValue(k, fc[k]);
+        // The delivered id is the whole `from <gaugeId>` string; the label already
+        // says "filled from", so the row shows the gauge alone.
+        const val = from && k === "native_id" ? from
+          : k === "district"
+            ? nearLabel(fc.district, fc.district_count, fc.country, fc.district_level)
+            : fmtValue(k, fc[k]);
         return `${dt}<dd class="m-0 text-slate-100 break-words">${val}</dd>`;
       }).join("");
-      const note = "";   // no model publishes a historical comparison today
+      const note = from
+        ? `<p class="mt-2 text-[11.5px] leading-snug text-slate-400 italic">` +
+          `No gauge in this ${view.dataset.unit.toLowerCase()}. It sits on the river ` +
+          `between this gauge and the next warned one downstream, and carries the ` +
+          `upstream forecast.</p>`
+        : "";
       return `<dl class="grid grid-cols-[128px_1fr] gap-x-2.5 gap-y-1 text-[12.5px]${i ? " mt-2 pt-2 border-t border-slate-700/50" : ""}">${rows}</dl>${note}`;
     }).join("");
     return `<div id="tile-river-${m}" class="bg-[#1b2a3a] border border-slate-700 border-l-4 rounded-[10px] px-3.5 py-3 mb-3${hide}" style="border-left-color:${sevColor(worstSeverity(fcs), m)}">` +

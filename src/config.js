@@ -83,6 +83,13 @@ export const RIVER_ID_LABEL = {
   flash: "Area",
 };
 
+// Flood Hub reports gauges, so the river between two warned gauges would be blank.
+// The pipeline walks HydroRIVERS between them and fills it with the UPSTREAM
+// gauge's forecast; a filled cell carries that gauge in place of an id of its own,
+// as `from <gaugeId>` (backend/common/hydrorivers.py, FLOOD_HUB_FILL_PREFIX). The
+// two spellings have to match — this is the only place the front end knows it.
+export const FILL_PREFIX = "from ";
+
 // Every pipeline stamps the FeatureCollection with a `kind`, so all the
 // user-facing wording (readout, attribution, panel copy) comes from one place
 // instead of being hardcoded to H3.

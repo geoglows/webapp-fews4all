@@ -224,6 +224,28 @@ RES_ZOOM_STEP = 2
 # build wrote them. PMTiles is read with HTTP range requests, which the dev server
 # honours. For production, serve backend/static/tiles/ from somewhere real and
 # repoint this — it is the only place the archives are named.
+# ---- HydroRIVERS (Flood Hub's network) -----------------------------------
+# Flood Hub is built on HydroSHEDS, so HydroRIVERS v10 is the stream set that
+# matches its gauges — and its gauge ids ARE HydroBASINS level-12 codes, which
+# HydroRIVERS carries as HYBAS_L12. Used to fill the river between two warned
+# gauges, which Flood Hub itself reports only as isolated points.
+HYDRORIVERS_SHP = os.path.join(INPUT_DIR, "HydroRIVERS_v10", "HydroRIVERS_v10.shp")
+HYDRORIVERS_TOPOLOGY_CSV = os.path.join(BACKEND, "static", "hydrorivers_topology.csv")
+HYDRORIVERS_CROSSWALK_CSV = os.path.join(BACKEND, "static", "h3_hydrorivers_r6.csv")
+# How many reaches to walk downstream before giving up on finding the next warned
+# gauge. A fill only happens BETWEEN two warnings, so this is a guard against
+# walking a continent, not the rule itself.
+HYDRORIVERS_MAX_HOPS = 400
+# A gauge whose id is not a `hybas_` code (today: CWC, ANA, BWDB, MOI — 32 of 99)
+# has no join key, so it is snapped to the nearest reach instead: the res-6 cell it
+# sits in, then rings outward to this radius. Two rings is about 12 km, which is
+# further than a gauge should ever be from its own river and close enough that the
+# answer is still that river rather than the next catchment.
+HYDRORIVERS_SNAP_RINGS = 2
+# What a filled cell calls itself. The span belongs to the warned gauge upstream of
+# it, so the cell names that gauge rather than claiming to be one.
+FLOOD_HUB_FILL_PREFIX = "from "
+
 # ---- river network -------------------------------------------------------
 # Topology lifted out of the v3 stream tiles by static/build_stream_attrs.py, so
 # the daily run can tell a river reported twice from two rivers meeting, and both

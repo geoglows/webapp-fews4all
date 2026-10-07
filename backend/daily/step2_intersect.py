@@ -14,7 +14,10 @@ Two ways a forecast reaches the grid, because the models publish two shapes:
             whole path rather than the single hexagon holding its midpoint.
   points    Flood Hub gauges and GloFAS reporting points sit at one coordinate and
             bin straight into the cell containing it. Neither has a crosswalk entry
-            — they are not GEOGLOWS reaches.
+            — they are not GEOGLOWS reaches. Flood Hub gets a second pass on top:
+            the river BETWEEN two warned gauges is walked on HydroRIVERS and filled
+            with the upstream gauge's forecast, so a warned river reads as a river
+            rather than as a row of dots (common/hydrorivers.py).
   areas     Flash-flood footprints are NOT gridded. They keep their own geometry
             end to end, and travel out as a sidecar keyed by the same forecast_uid
             so the forecast table stays one shape across every model.
@@ -51,6 +54,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import config as C
 from common import streams as S          # noqa: E402
+from common import hydrorivers as HR    # noqa: E402
 from common import models as M          # noqa: E402
 
 
@@ -274,6 +278,30 @@ def main(input_dir=None, output_dir=None, release=None):
         pairs.extend(pts)
         print(f"  points     {len(pts):>6,} cell/forecast pair(s) from "
               f"{len(point_records):,} forecast(s)  {time.time() - t0:.1f}s")
+
+    # Flood Hub reports gauges, so its warnings land as isolated hexagons with the
+    # river between them blank. The span between two warned gauges is walked on
+    # HydroRIVERS — Flood Hub's own network — and filled with the UPSTREAM gauge's
+    # forecast. See common/hydrorivers.py for the rule and what it rests on.
+    fh = by_model.get("flood_hub", {}).get("records", [])
+    if fh:
+        fh_uids = {r["forecast_uid"] for r in fh}
+        gauge_cells = {c for c, u in pairs if u in fh_uids}
+        t0 = time.time()
+        fills, fill_pairs, fs = HR.fill(fh, gauge_cells)
+        if fill_pairs:
+            records.extend(fills)
+            pairs.extend(fill_pairs)
+            print(f"  fill       {len(fill_pairs):>6,} cell(s) filled between warned "
+                  f"gauges, from {fs.get('filled_forecasts', 0):,} gauge(s)  "
+                  f"{time.time() - t0:.1f}s")
+            print(f"             gauges on a reach: {fs.get('by_id', 0):,} by id, "
+                  f"{fs.get('snapped', 0):,} snapped, "
+                  f"{fs.get('unresolved', 0):,} unresolved")
+            print(f"             {fs.get('spans', 0):,} span(s) closed "
+                  f"({fs.get('filler_reaches', 0):,} reach(es)), "
+                  f"{fs.get('open_ended', 0):,} walk(s) reached no second warning "
+                  f"and were discarded")
 
     line_records = [r for m in by_model.values() if m["kind"] == "line" for r in m["records"]]
     if line_records:
