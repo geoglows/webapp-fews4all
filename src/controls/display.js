@@ -3,6 +3,7 @@
 // The tabs exist so the panel stays short enough to leave most of the map visible.
 import {DATASETS_MENU, FLASH_TIER, FLASH_TIERS, PANEL_MODELS, SEVERITY, SEV_KEYS} from "../config.js";
 import {applyFillStyle} from "../layers/cells_tiles.js";
+import {applyHeatStyle} from "../layers/heat.js";
 import {applyFlashStyle} from "../layers/flash.js";
 import {dropdownControl} from "../ui/dropdown.js";
 import {modelLabel} from "../format.js";
@@ -100,6 +101,16 @@ const severityRow = (k, label, shown, width) =>
   `<span id="disp-lw-${k}-val" style="width:26px;text-align:right;color:#64748b">` +
   `${Number(width).toFixed(1)}</span></div>`;
 
+// A labelled range carrying its value as a percentage, so one control serves both
+// an opacity (0..1) and the spread multiplier (where 100% is the default blur).
+const pctRange = (id, label, value, min = 0, max = 100, step = 5) =>
+  `<label style="display:flex;align-items:center;gap:7px;margin-bottom:4px">` +
+  `<span style="white-space:nowrap;width:44px">${label}</span>` +
+  `<input type="range" id="${id}" min="${min}" max="${max}" step="${step}" ` +
+  `value="${Math.round(value * 100)}" style="flex:1;accent-color:#0284c7;cursor:pointer">` +
+  `<span id="${id}-val" style="width:36px;text-align:right;color:#64748b">` +
+  `${Math.round(value * 100)}%</span></label>`;
+
 const slider = (id, value) =>
   `<label style="display:flex;align-items:center;gap:7px;margin-bottom:4px">` +
   `<span style="white-space:nowrap">Fill</span>` +
@@ -114,7 +125,16 @@ function areasTab() {
   // The H3/Basins switch is gone for now: the CSV pipeline builds cells only, and
   // an option that 404s is worse than no option. It comes back when basins are
   // rebuilt on the new backend.
-  return head("Appearance") +
+  return head("Heat map &nbsp;·&nbsp; weighted risk index") +
+    check("disp-heat", "Draw the risk index as heat", view.heatOn) +
+    rampRow("heat", "Heat ramp", view.heatRampId) +
+    pctRange("disp-heat-opacity", "Opacity", view.heatOpacity) +
+    pctRange("disp-heat-radius", "Spread", view.heatRadius, 40, 250, 10) +
+    `<p style="font:400 11px system-ui,sans-serif;color:#94a3b8;margin:7px 0 0">` +
+    `Cells stay underneath, invisible but still clickable. Hovering or selecting ` +
+    `one brings its hexagon back.</p>` + rule +
+
+    head("Appearance") +
     rampRow(ALL_MODELS, "All models", sharedRamp(PANEL_MODELS), true) +
     PANEL_MODELS.map((m) => rampRow(m, modelLabel(m), modelRamp[m])).join("") +
     slider("disp-opacity", view.fillOpacity) +
@@ -194,6 +214,7 @@ export function displayControl() {
           const key = sel.dataset.key;
           if (key === ALL_MODELS) for (const m of PANEL_MODELS) modelRamp[m] = sel.value;
           else if (key === "flash") view.flashRampId = sel.value;
+          else if (key === "heat") view.heatRampId = sel.value;
           else modelRamp[key] = sel.value;
           renderTab();                    // the sample beside the picker follows
           actions.onDisplayChange();      // the map and the panel's legends
@@ -205,6 +226,18 @@ export function displayControl() {
           view.flashAboveCells = e.target.checked;
           applyLayerOrder();            // restack; nothing repaints or refetches
         });
+
+        const heatCb = $("#disp-heat");
+        if (heatCb) heatCb.addEventListener("change", (e) => {
+          view.heatOn = e.target.checked;
+          applyHeatStyle();
+          // The cells' own paint depends on it: they go to zero under the heat and
+          // come back when it is switched off.
+          applyFillStyle();
+          actions.onDisplayChange();      // hatch visibility and the panel legend
+        });
+        bindPct($("#disp-heat-opacity"), "heatOpacity");
+        bindPct($("#disp-heat-radius"), "heatRadius");
 
         const hatch = $("#disp-hatch");
         if (hatch) hatch.addEventListener("change", (e) => {
@@ -247,6 +280,18 @@ export function displayControl() {
 
         bindFill($("#disp-flash-opacity"), $("#disp-flash-outline"),
           "flashOpacity", "flashOutlineOnly", applyFlashStyle);
+      }
+
+      // A percentage range bound straight onto one `view` key. Paint only — the
+      // heat surface's geometry never changes, so none of these rebuild anything.
+      function bindPct(range, key) {
+        if (!range) return;
+        const readout = body.querySelector("#" + range.id + "-val");
+        range.addEventListener("input", () => {
+          view[key] = Number(range.value) / 100;
+          if (readout) readout.textContent = range.value + "%";
+          applyHeatStyle();
+        });
       }
 
       // Slider + outline-only pair, shared by both tabs: both are pure paint

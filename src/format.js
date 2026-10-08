@@ -20,6 +20,15 @@ export function darken(hex, f = 0.55) {
   const c = (sh) => Math.round(((n >> sh) & 255) * f).toString(16).padStart(2, "0");
   return "#" + c(16) + c(8) + c(0);
 }
+// A hex colour at a given alpha, as a CSS rgba() string. Needed because a heat
+// ramp's first stop has to be fully transparent — not white, which would paint a
+// haze over the basemap everywhere the surface is empty.
+export function rgba(hex, a) {
+  if (!hex || hex[0] !== "#" || hex.length < 7) return `rgba(0,0,0,${a})`;
+  const n = parseInt(hex.slice(1, 7), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
 // Ink that stays readable on `hex`. Relative luminance per WCAG: channels are
 // linearised before weighting, because sRGB is gamma encoded and averaging the
 // raw bytes overrates dark colours badly — #2b0b57 (inferno's `extreme`) reads

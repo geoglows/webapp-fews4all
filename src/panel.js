@@ -263,13 +263,70 @@ export function renderPanel(props) {
       `</div><p class="text-slate-400 text-[12px] mt-1.5">Totals across the whole ${unitLabel(props).toLowerCase()}.</p></div></div>`
     : "";
 
+  // The risk index: the one score, then the three categories that produced it.
+  // Shown decomposed rather than as a bare number — the score folds a near-constant
+  // (concurrence varies in 4% of cells), a three-level ladder and a continuous
+  // exposure blend into one value, so two cells can tie for completely different
+  // reasons and only the parts say which. The bars are the parts.
+  const wri = selected ? props.wri : null;
+  const wriBar = (label, v, note) => {
+    const pct = Math.max(0, Math.min(100, Math.round(100 * (v == null ? 0 : v))));
+    return `<div class="mb-2">` +
+      `<div class="flex items-baseline justify-between text-[11px] mb-1">` +
+      `<span class="text-slate-500 font-medium">${label}</span>` +
+      `<span class="text-slate-700 font-semibold tabular-nums">${v == null ? "—" : v.toFixed(2)}</span></div>` +
+      `<div class="h-1.5 rounded-full bg-slate-200 overflow-hidden">` +
+      `<div class="h-full rounded-full bg-sky-500" style="width:${pct}%"></div></div>` +
+      (note ? `<div class="text-[10.5px] text-slate-400 mt-0.5">${note}</div>` : "") +
+      `</div>`;
+  };
+  const wriHtml = wri
+    ? `<div class="mt-4">` +
+      `<h3 class="flex items-center justify-between text-slate-800 font-semibold text-[11px] uppercase tracking-wider mb-2">` +
+      `<span class="flex items-center gap-1.5">${icon("chart-bar", "text-sky-500 text-sm")}Risk index</span>${collapseBtn("sec-wri")}</h3>` +
+      `<div id="sec-wri">` +
+      `<div class="flex items-baseline gap-1.5 mb-3">` +
+      `<span class="text-slate-900 font-bold text-[26px] leading-none tabular-nums">${wri.score.toFixed(2)}</span>` +
+      `<span class="text-slate-400 text-[11px]">of 1.00</span></div>` +
+      wriBar("Severity", wri.severity,
+        `${SEVERITY[props.severity] ? SEVERITY[props.severity].label : "—"} — sets the band this ${view.dataset.unit.toLowerCase()} can score in`) +
+      wriBar("Concurrence", wri.concurrence,
+        props.model_count > 1
+          ? `${props.model_count} models share a base ${view.dataset.unit.toLowerCase()} here`
+          : "one model — a flash footprint also counts") +
+      wriBar("Impact", wri.impact, "population, buildings, roads, farmland, rail") +
+      `<p class="text-slate-400 text-[12px] mt-1.5">Severity picks the band; concurrence and impact ` +
+      `position the ${view.dataset.unit.toLowerCase()} inside it, and can never lift it past the band above.</p>` +
+      `</div></div>`
+    : "";
+
+  // The heat legend, shown only while the surface is drawn. It is not a severity
+  // key: the heat is the risk index, which folds severity, concurrence and impact
+  // together, so labelling it with the three rungs would be a different claim than
+  // the map is making. The model tiles below keep their own keys for the hexagon a
+  // click brings back.
+  const heatLegendHtml = view.heatOn
+    ? `<div class="mb-3 rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2.5">` +
+      `<div class="text-[10.5px] font-semibold uppercase tracking-wide text-slate-500 mb-1.5">` +
+      `Heat map — risk index</div>` +
+      `<div class="h-2.5 rounded-full border border-slate-200" style="background:linear-gradient(to right,` +
+      SEV_KEYS.map((k, i) =>
+        `${paletteColor(view.heatRampId, k)} ${15 + i * 42}%`).join(",") + `)"></div>` +
+      `<div class="flex justify-between text-[10px] text-slate-400 mt-1">` +
+      `<span>lower</span><span>higher</span></div>` +
+      `<p class="text-[11px] text-slate-400 mt-1.5 leading-snug">` +
+      `Severity, model agreement and impact in one value. ` +
+      `${view.dataset.unit}s are still underneath — click one to see its score broken down.</p></div>`
+    : "";
+
   // Section 1 — River Floods: the concurrence key, the All-models filter, the
   // forecast tiles and impact, all collapsible under one heading. The tiles name
   // the selected cell themselves, so the section carries no header of its own.
   const riverSection =
     `<div id="section-river" class="mb-4">` + sectionHeader("River Floods", "sec-river") +
-    `<div id="sec-river">` + filterDropdown("river", PANEL_MODELS, visibleModels) +
-    tiles + impactHtml + `</div></div>`;
+    `<div id="sec-river">` + heatLegendHtml +
+    filterDropdown("river", PANEL_MODELS, visibleModels) +
+    tiles + impactHtml + wriHtml + `</div></div>`;
 
   // Section 2 — Flash Floods: a global overlay. Its filter reveals a tile per
   // enabled model (and turns that model's polygons on the map).

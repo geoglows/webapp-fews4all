@@ -243,12 +243,19 @@ export const ADM_ATTRIBUTION =
 // whatever the release declares, so they are collected from the map by name at
 // the moment the order is applied. A static list went stale the moment the cells
 // moved into vector tiles, and silently stopped ordering them at all.
+// The risk-index heat map: one blurred surface built from weighted cell centres.
+// It replaces the per-model colouring rather than joining it, so it sits directly
+// under the (then invisible) cells, which stay on the map as hit targets.
+export const HEAT_SRC = "heat-src";
+export const HEAT_LAYER = "heat";
+
 export const LAYER_GROUPS = {
   contextTop: [
     "ctx-streams-line", "ctx-streams-casing",
     "ctx-districts-line", "ctx-districts-casing", "ctx-districts-fill",
   ],
   flash: ["flash-line-high", "flash-fill-high", "flash-line-likely", "flash-fill-likely"],
+  heat: [HEAT_LAYER],
   backdrop: [
     ...[...ADM_LEVELS].sort((a, b) => b - a).flatMap((l) => [ADM_LINE(l), ADM_FILL(l)]),
     ...STREAMS_LAYERS,

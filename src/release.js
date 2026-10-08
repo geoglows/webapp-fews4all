@@ -123,6 +123,16 @@ export function buildRelease(style, cellsText, forecastsText, rollupText) {
       co_models: r.co_models ? r.co_models.split("|").map((s) => s.split("+")) : [],
       forecast_count: num(r.forecast_count) || 0,
       impact: measured ? impact : null,
+      // The risk index and the three categories it is built from, delivered
+      // together so the panel can say WHY a cell scored rather than only what it
+      // scored. Null on a release written before the index existed, so the panel
+      // leaves the block out instead of showing a confident zero.
+      wri: num(r.wri) === null ? null : {
+        score: num(r.wri),
+        severity: num(r.wri_severity),
+        concurrence: num(r.wri_concurrence),
+        impact: num(r.wri_impact),
+      },
     });
   }
 
@@ -215,7 +225,17 @@ function buildRules(style, cells) {
     p[row.severity] = row.color;
   }
 
-  return {sources, layers, filters, palettes, models: style.models || []};
+  // The risk index's own constants, as the release that computed them stated them.
+  // Read as key/value so a weight added at the backend needs no change here, and
+  // so a release written before the index existed simply yields an empty object
+  // and every reader falls back to its own default.
+  const index = {};
+  for (const r of style.index || []) {
+    const v = num(r.value);
+    if (r.key) index[r.key] = v === null ? r.value : v;
+  }
+
+  return {sources, layers, filters, palettes, models: style.models || [], index};
 }
 
 // ---- Loading --------------------------------------------------------------
@@ -231,19 +251,27 @@ function buildRules(style, cells) {
 // manifest: six fixed names are a convention worth keeping simple, and a manifest
 // would be a seventh file to keep in step with them.
 export const TABLES = ["cells.csv", "forecasts.csv", "cell_forecasts.csv",
-                       "layers.csv", "palettes.csv", "models.csv"];
+                       "layers.csv", "palettes.csv", "models.csv", "index.csv"];
 
 export async function loadRelease(base) {
   const root = base.endsWith("/") ? base : base + "/";
-  const [cellsText, forecastsText, rollupText, layersText, palettesText, modelsText] =
+  const [cellsText, forecastsText, rollupText, layersText, palettesText, modelsText,
+         indexText] =
     await Promise.all(TABLES.map((name) => fetch(root + name).then((r) => {
-      if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
+      // index.csv arrived after the other six. A release written before it exists
+      // is still perfectly drawable — the risk index simply falls back to its
+      // defaults — so a 404 on that one file is not a reason to fail the load.
+      if (!r.ok) {
+        if (name === "index.csv") return "";
+        throw new Error(`${name}: HTTP ${r.status}`);
+      }
       return r.text();
     })));
   const style = {
     layers: toObjects(parseCsv(layersText)),
     palettes: toObjects(parseCsv(palettesText)),
     models: toObjects(parseCsv(modelsText)),
+    index: indexText ? toObjects(parseCsv(indexText)) : [],
   };
   return buildRelease(style, cellsText, forecastsText, rollupText);
 }

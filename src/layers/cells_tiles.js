@@ -115,13 +115,27 @@ function fillColorExpr() {
   return byOwner;
 }
 
+// Under the heat map the cells go invisible but stay on the map: they are the hit
+// targets the surface has none of, and a heat map that cannot be interrogated is a
+// picture. Zero opacity rather than visibility:none, because MapLibre only returns
+// features from VISIBLE layers — hiding them properly would make the surface
+// unclickable, which is the one thing it must not be.
+//
+// Hover and selection stay painted. Without them a click on the heat gives no sign
+// of what was picked, and the panel would be reporting about a hexagon the viewer
+// cannot see. Those two states are the only thing drawn in heat mode.
+const HEAT_SELECTED_FILL = 0.45;
+const HEAT_HOVER_FILL = 0.3;
+
 function fillOpacityExpr() {
   if (view.outlineOnly) return 0;
   return ["case",
     ["==", ["coalesce", ["feature-state", "severity"], ""], ""], 0,
-    ["boolean", ["feature-state", "selected"], false], Math.min(1, view.fillOpacity * 0.7),
-    ["boolean", ["feature-state", "hover"], false], Math.min(1, view.fillOpacity * 2),
-    view.fillOpacity];
+    ["boolean", ["feature-state", "selected"], false],
+      view.heatOn ? HEAT_SELECTED_FILL : Math.min(1, view.fillOpacity * 0.7),
+    ["boolean", ["feature-state", "hover"], false],
+      view.heatOn ? HEAT_HOVER_FILL : Math.min(1, view.fillOpacity * 2),
+    view.heatOn ? 0 : view.fillOpacity];
 }
 
 // Bands live on a GeoJSON source, so they never receive the feature-state join and
@@ -130,6 +144,7 @@ function fillOpacityExpr() {
 // made them invisible. Their colour is already stamped per feature, so the only
 // thing left to vary is the resting opacity.
 function splitOpacityExpr() {
+  if (view.heatOn) return 0;          // the surface replaces the per-model reading
   return view.outlineOnly ? 0 : view.fillOpacity;
 }
 
@@ -197,8 +212,14 @@ function paintFor(res) {
     [lineId(res)]: {
       "line-color": lineColorExpr(),
       "line-width": lineWidthExpr(),
+      // Same bargain as the fill: nothing at rest under the heat, but a hovered
+      // or selected hexagon keeps its outline, which is what makes a pick legible
+      // against a blurred surface.
       "line-opacity": ["case",
-        ["==", ["coalesce", ["feature-state", "severity"], ""], ""], 0, 0.85],
+        ["==", ["coalesce", ["feature-state", "severity"], ""], ""], 0,
+        ["boolean", ["feature-state", "selected"], false], 1,
+        ["boolean", ["feature-state", "hover"], false], 1,
+        view.heatOn ? 0 : 0.85],
     },
   };
 }
@@ -208,7 +229,8 @@ function paintFor(res) {
 // Whether the concurrence hatch draws at all. One definition, read both when the
 // layer is built and whenever the display settings change, so the two can never
 // disagree about a setting that starts out off.
-const hashVisibility = () => (view.hatchOn && !view.outlineOnly ? "visible" : "none");
+const hashVisibility = () =>
+  (view.hatchOn && !view.outlineOnly && !view.heatOn ? "visible" : "none");
 
 function makeHashImage(color, size = 16, w = 2) {
   const cv = document.createElement("canvas");

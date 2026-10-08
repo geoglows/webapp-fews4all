@@ -24,6 +24,7 @@ import {map, registerPanelFocus} from "./map.js";
 import {view, visibleFlashModels} from "./settings.js";
 import * as panel from "./panel.js";
 import * as cells from "./layers/cells_tiles.js";
+import * as heat from "./layers/heat.js";
 import * as flash from "./layers/flash.js";
 import * as boundaries from "./layers/boundaries.js";
 import * as streams from "./layers/streams.js";
@@ -36,6 +37,9 @@ import * as display from "./controls/display.js";
 function applyDisplaySettings() {
   cells.ensureHashImages();
   cells.refresh();
+  // The surface is built from the same filtered cells, so anything that changes
+  // which cells qualify changes it too.
+  heat.refresh();
   flash.applyFlashColors();
   panel.rerenderPanel();
 }
@@ -87,6 +91,7 @@ map.once("load", () => {
   loadRelease(RELEASE_BASE)
     .then((release) => {
       cells.build(release);
+      heat.build(release);
       // The controls were mounted before this resolved, so they are still showing
       // the app's built-in defaults. Restate them now that the release has said
       // which palettes exist and which one each model opens on.

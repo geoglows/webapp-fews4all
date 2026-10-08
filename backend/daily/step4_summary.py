@@ -19,6 +19,13 @@ looking things up rather than intersecting polygons.
                            districts, and naming the cell's would be a different
                            and vaguer claim.
 
+  the risk index onto cells  one score per cell from three categories kept separate
+                           — concurrence, severity, impact — plus the three
+                           categories themselves. Computed here because it needs
+                           the impact join above and because it is an enrichment of
+                           a cell, not a decision about one. common/wri.py holds
+                           the formula and the measurements behind it.
+
 INPUTS
     backend/output/<release>/cells.csv            from step 3
     backend/output/<release>/forecasts.csv        from step 2
@@ -26,7 +33,7 @@ INPUTS
     Files/International_boundaries/*.gpkg         geoBoundaries CGAZ ADM0/1/2
 
 OUTPUTS
-    backend/output/<release>/cells.csv            same file + impact columns
+    backend/output/<release>/cells.csv            same file + impact + index columns
     backend/output/<release>/forecasts.csv        same file + district columns
 
 Both are rewritten in place. There is no separate delivered copy: every column
@@ -42,6 +49,7 @@ import time
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import admin               # noqa: E402
 from common import config as C         # noqa: E402
+from common import wri             # noqa: E402
 
 
 def needed_base_cells(cell_rows):
@@ -75,6 +83,50 @@ def load_impact(wanted):
         for row in rd:
             if row[0] in wanted:
                 out[row[0]] = [float(row[c] or 0) for c in cols]
+    return out
+
+
+def flash_cells(out_dir):
+    """Every cell a flash footprint covers, at every resolution.
+
+    Flash is the one model that never joins the grid: it keeps its own geometry end
+    to end, which is what lets it be drawn as a footprint rather than as hexagons.
+    It is gridded HERE and only here, so the index can see a compound hazard — a
+    pluvial footprint over a fluvial warning. Nothing about the delivered flash
+    layer changes, and flash still appears in no cell's `models` or `co_models`.
+
+    A footprint smaller than a hexagon covers no cell centre and would come back
+    empty from a polygon fill, so one that yields nothing falls back to the cell
+    holding its first vertex — a small flash area is still somewhere.
+    """
+    path = os.path.join(out_dir, "flash_areas.geojson")
+    if not os.path.exists(path):
+        return set()
+    import json
+    import h3
+    with open(path, encoding="utf-8") as f:
+        coll = json.load(f)
+
+    base = set()
+    for ft in coll.get("features", []):
+        g = ft.get("geometry") or {}
+        kind, coords = g.get("type"), g.get("coordinates") or []
+        polys = [coords] if kind == "Polygon" else coords if kind == "MultiPolygon" else []
+        for p in polys:
+            try:
+                got = set(h3.geo_to_cells({"type": "Polygon", "coordinates": p}, C.BASE_RES))
+            except (ValueError, TypeError):
+                got = set()
+            if not got and p and p[0]:
+                lon, lat = p[0][0][0], p[0][0][1]
+                got = {h3.latlng_to_cell(lat, lon, C.BASE_RES)}
+            base |= got
+
+    out = set(base)
+    for c in base:
+        for res in C.RESOLUTIONS:
+            if res != C.BASE_RES:
+                out.add(h3.cell_to_parent(c, res))
     return out
 
 
@@ -139,8 +191,31 @@ def main(release_dir=None):
                 for i, x in enumerate(v):
                     totals[i] += x
         with_impact += hit
-        out_cells.append([r[c] for c in C.CELL_COLUMNS] + tidy(totals, hit))
+        row = {c: r[c] for c in C.CELL_COLUMNS}
+        row.update(zip(C.IMPACT_FIELDS, tidy(totals, hit)))
+        out_cells.append(row)
     print(f"  {with_impact:,}/{len(cell_rows):,} cell(s) carry impact")
+
+    # ---- the risk index ---------------------------------------------------
+    t0 = time.time()
+    flash = flash_cells(out_dir)
+    tally = wri.add(out_cells, flash)
+    print(f"\nRisk index: {len(flash):,} cell(s) under a flash footprint  "
+          f"{time.time() - t0:.1f}s")
+    for res, t in tally.items():
+        print(f"  res {res}: {t['cells']:>6,} cell(s)  "
+              f"score {t['min']:.3f} / {t['median']:.3f} / {t['max']:.3f} "
+              f"(min/median/max), {t['with_agreement']:,} above the severity floor")
+    # The guard the anchored form exists to give. Anything but zero means the
+    # modifiers have outgrown the ladder and the caps in config need lowering.
+    base_rows = [r for r in out_cells if int(r["res"]) == C.BASE_RES]
+    inv = wri.inversions(base_rows)
+    if inv:
+        print("  WARNING — the ladder is inverted at res "
+              f"{C.BASE_RES}: " + ", ".join(f"{k}: {v:,}" for k, v in inv.items()),
+              file=sys.stderr)
+    else:
+        print(f"  ladder intact: no cell outranks a worse rung at res {C.BASE_RES}")
 
     # ---- Near onto forecasts ----------------------------------------------
     fc_rows = read_rows(fc_path)
@@ -152,11 +227,12 @@ def main(release_dir=None):
     out_fc = [[r.get(c, "") for c in C.FORECAST_DELIVERY_COLUMNS] for r in fc_rows]
 
     # ---- written back over their own inputs ---------------------------------
-    c_bytes = write_csv(cells_path, C.CELL_DELIVERY_COLUMNS, out_cells)
+    c_bytes = write_csv(cells_path, C.CELL_DELIVERY_COLUMNS,
+                        [[r[c] for c in C.CELL_DELIVERY_COLUMNS] for r in out_cells])
     f_bytes = write_csv(fc_path, C.FORECAST_DELIVERY_COLUMNS, out_fc)
     print(f"\nWrote {out_dir}")
     print(f"  cells.csv            {len(out_cells):>7,} row(s)  {c_bytes / 1e6:>6.2f} MB"
-          f"   (+{len(C.IMPACT_FIELDS)} impact column(s))")
+          f"   (+{len(C.IMPACT_FIELDS)} impact, +{len(C.WRI_COLUMNS)} index column(s))")
     print(f"  forecasts.csv        {len(out_fc):>7,} row(s)  {f_bytes / 1e6:>6.2f} MB"
           f"   (+district, district_level)")
 

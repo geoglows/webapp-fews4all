@@ -210,11 +210,15 @@ function cellLayers() {
 
 // Top of the array draws on top.
 function layerOrder() {
-  const {contextTop, flash, backdrop} = LAYER_GROUPS;
+  const {contextTop, flash, heat, backdrop} = LAYER_GROUPS;
   const cells = cellLayers();
   return [
     ...contextTop,
     ...(view.flashAboveCells ? [...flash, ...cells] : [...cells, ...flash]),
+    // Under the cells on purpose. In heat mode the cells are invisible at rest, so
+    // nothing of theirs covers the surface — but a hovered or selected hexagon has
+    // to draw OVER it, or picking a place on the heat map gives no visible answer.
+    ...heat,
     ...backdrop,
   ];
 }

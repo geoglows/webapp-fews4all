@@ -118,7 +118,81 @@ CELL_COLUMNS = ["h3_id", "res", "severity", "model_count", "models",
 # every added column is new, and each step reads only columns it wrote or found,
 # so re-running one is safe and leaves one set of files per release.
 IMPACT_FIELDS = ["population", "buildings", "farmland_m2", "highway_km", "railway_km"]
-CELL_DELIVERY_COLUMNS = CELL_COLUMNS + IMPACT_FIELDS
+
+# ---- Weighted Risk Index --------------------------------------------------
+# One number per cell, from three categories kept separate all the way through:
+# how many sources agree, how severe they say it is, and what is underneath.
+# common/wri.py holds the formula and the measurements behind these numbers.
+#
+# The categories are NOT commensurable and are deliberately not weighted as peers.
+# Measured over a release at res 6: concurrence takes 5 distinct values with 95.7%
+# of cells on one of them, severity takes 3, impact takes 21,787. Weighted as three
+# equal terms, impact becomes the ordering and concurrence becomes decoration — and
+# a warning cell with good corroboration outranks an extreme one almost everywhere
+# (3,314 of 3,452 extreme cells, measured). So severity is the base and the other
+# two are capped modifiers on it: they can promote a cell, they cannot outrank a
+# rung of the ladder.
+#
+#   WRI = severity x (1 + CAP_CONCURRENCE x concurrence) x (1 + CAP_IMPACT x impact)
+#
+# scaled so the top of the range is 1. Every term is 0..1 in its own right and all
+# three are delivered beside the score, so a cell can always say why it scored.
+WRI_SEVERITY = {"warning": 1 / 3, "danger": 2 / 3, "extreme": 1.0}
+# Rungs by how many models share one BASE cell — the co_models fact, not a coarse
+# cell's own model list. A single model scores zero on this category: one model is
+# not agreement, and the cell is carried by its severity alone.
+WRI_CONCURRENCE = {1: 0.00, 2: 0.25, 3: 0.75}
+# A flash footprint over the same cell. Added to whatever rung the river models
+# reached, which reproduces the intended ladder (2 models 0.25, 2+flash 0.50,
+# 3 models 0.75, 3+flash 1.00) — and gives a single-model cell with a flash
+# footprint the same 0.25 as two river models agreeing.
+#
+# That last case is a judgement, not a derivation. Flash is pluvial and the river
+# models are fluvial, so a flash polygon over a GloFAS cell is not a second witness
+# to one flood; it is two different floods in one place. Compound, not corroborated
+# — which is a reason to raise the cell, but a different reason, and it is kept on
+# its own constant so it can be separated later without touching the ladder.
+WRI_FLASH_BONUS = 0.25
+# The impact category: each component percentile-ranked WITHIN its resolution, then
+# blended in this order. Percentile rather than raw value because the components are
+# in five incompatible units and all are badly skewed — population's p99 is 103,264
+# against a 747,413 maximum, so a linear blend leaves 99% of cells in the bottom
+# seventh of the range. Railways sit last because they are zero in 82% of cells and
+# can only ever break a tie.
+WRI_IMPACT_WEIGHTS = {"population": 0.40, "buildings": 0.25, "highway_km": 0.20,
+                      "farmland_m2": 0.10, "railway_km": 0.05}
+# How far the two modifiers may lift a cell, together. Derived rather than chosen,
+# because a chosen pair drifts out of agreement with the ladder it is supposed to
+# respect: the headroom IS the smallest ratio between adjacent severity rungs.
+#
+#   extreme / danger  = 1.50      <- the binding one
+#   danger  / warning = 2.00
+#
+# At exactly 1.50 the three rungs tile the scale end to end without overlapping. A
+# fully corroborated danger over a city lands exactly where a bare extreme starts
+# and never above it, so severity owns the band and concurrence and impact decide
+# the position inside it. Anything larger and the modifiers outgrow the ladder:
+# measured at 0.42/0.33, 2,098 extreme cells fell below the best danger cell.
+#
+# The split is in log space so the two caps multiply back to the headroom exactly.
+# Concurrence takes the larger share, which is the one thing the priority ordering
+# asks for that survives measurement.
+_RUNGS = sorted(WRI_SEVERITY.values())
+WRI_LIFT = min(b / a for a, b in zip(_RUNGS, _RUNGS[1:]))
+WRI_LIFT_SPLIT = 0.56                       # concurrence's share of the headroom
+WRI_CAP_CONCURRENCE = WRI_LIFT ** WRI_LIFT_SPLIT - 1
+WRI_CAP_IMPACT = WRI_LIFT ** (1 - WRI_LIFT_SPLIT) - 1
+# Delivered beside the score, so the panel can decompose it and so a weight change
+# needs no rebuild of anything upstream.
+WRI_COLUMNS = ["wri", "wri_severity", "wri_concurrence", "wri_impact"]
+# The lowest score any flagged cell can reach: a bare warning with no corroboration
+# and nothing underneath. Nothing sits between 0 and this, so a heat map scaled from
+# zero would spend a fifth of its range on a value that never occurs. Published with
+# the release (step 5's index.csv) so the front end scales against the index's own
+# floor rather than against a copy of these constants.
+WRI_FLOOR = min(WRI_SEVERITY.values()) / WRI_LIFT
+
+CELL_DELIVERY_COLUMNS = CELL_COLUMNS + IMPACT_FIELDS + WRI_COLUMNS
 FORECAST_DELIVERY_COLUMNS = FORECAST_COLUMNS + ["district", "district_level"]
 
 CELL_IMPACT_TABLE = os.path.join(BACKEND, "static", "cell_impact_r6.csv")

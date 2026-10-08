@@ -76,6 +76,28 @@ def model_rows():
             for i, m in enumerate(C.MODEL_ORDER)]
 
 
+INDEX_COLUMNS = ["key", "value"]
+
+
+def index_rows():
+    """The risk index's own constants, travelling with the release that used them.
+
+    The front end needs the floor to scale a heat ramp, and anyone reading a release
+    six months on needs the weights that produced its scores. Both are the kind of
+    number that gets copied into a second file and then quietly diverges, so the
+    release carries them rather than the reader guessing.
+    """
+    rows = [["floor", round(C.WRI_FLOOR, 6)],
+            ["lift", round(C.WRI_LIFT, 6)],
+            ["cap_concurrence", round(C.WRI_CAP_CONCURRENCE, 6)],
+            ["cap_impact", round(C.WRI_CAP_IMPACT, 6)],
+            ["flash_bonus", C.WRI_FLASH_BONUS]]
+    rows += [[f"severity_{k}", round(v, 6)] for k, v in C.WRI_SEVERITY.items()]
+    rows += [[f"concurrence_{k}", v] for k, v in C.WRI_CONCURRENCE.items()]
+    rows += [[f"impact_{k}", v] for k, v in C.WRI_IMPACT_WEIGHTS.items()]
+    return rows
+
+
 def write_csv(path, columns, rows):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", newline="", encoding="utf-8") as f:
@@ -104,6 +126,7 @@ def main(release_dir=None):
         ("layers.csv", LAYER_COLUMNS, layer_rows()),
         ("palettes.csv", PALETTE_COLUMNS, palette_rows()),
         ("models.csv", MODEL_COLUMNS, model_rows()),
+        ("index.csv", INDEX_COLUMNS, index_rows()),
     ]
     written = [(name, len(rows), write_csv(os.path.join(out_dir, name), cols, rows))
                for name, cols, rows in tables]

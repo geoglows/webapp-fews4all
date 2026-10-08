@@ -24,6 +24,14 @@ const DISPLAY_DEFAULTS = {
   // Flash polygons under the flagged cells. They are much the larger shape, so
   // on top they bury the hexagons they overlap; underneath, both read.
   flashAboveCells: false,
+  // The risk-index heat map. On by default: it is the view the index was built
+  // for, and the per-model colouring it stands in front of is one checkbox away.
+  // The cells are still there underneath it, drawn at zero opacity, so hover and
+  // click work exactly as before — a heat map you cannot interrogate is a picture.
+  heatOn: true,
+  heatRampId: "inferno",
+  heatOpacity: 0.85,
+  heatRadius: 1,                    // multiplier on the zoom-scaled blur radius
 };
 // Outline weight per severity, in pixels. Nested rather than flat so the three
 // read as one control, and copied rather than shared on every use — Object.assign
