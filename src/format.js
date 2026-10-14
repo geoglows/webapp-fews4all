@@ -109,9 +109,15 @@ export function fmtCount(n) {
 
 export function fmtValue(key, val) {
   if (val === undefined || val === null || val === "") return "—";
-  if (key === "returnPeriodYr") return val + "-year";
-  if (key === "peakDischargeCms") return val + " m³/s";
-  if (key.endsWith("Time")) {
+  // snake_case, because that is what the delivered tables use. These three tests
+  // were written against a retired camelCase contract and had been silently
+  // matching nothing: a return period rendered as a bare "2", a discharge with no
+  // unit, and — the loud one — every timestamp as its raw ISO string, so a Flood
+  // Hub tile read "2026-09-23T20:56:55.602387Z". Same bug as the `fc.riverId` link
+  // that deep-linked every Flood Hub tile to a bare coordinate.
+  if (key === "return_period_yr") return val + "-year";
+  if (key === "flow_cms") return val + " m³/s";
+  if (key.endsWith("_time")) {
     // A bare YYYY-MM-DD is a forecast DAY, not an instant — GloFAS counts its
     // horizon in whole days. `new Date("2026-10-01")` is parsed as UTC midnight,
     // which renders as the evening BEFORE anywhere west of Greenwich, so the day
@@ -161,7 +167,7 @@ export function modelLink(fc) {
 
 // The gauge a filled Flood Hub cell was inferred from, or null for a real gauge.
 // A filled cell is not a gauge and must not read as one: it is a statement about
-// the river between two warned gauges, carried downstream from the upstream one.
+// the reach that gauge stands on, carried along it.
 export function fillSource(fc) {
   const id = String((fc && fc.native_id) || "");
   return id.startsWith(FILL_PREFIX) ? id.slice(FILL_PREFIX.length).trim() || null : null;
@@ -182,8 +188,25 @@ export function fillSource(fc) {
 // being true because the corroborating model is hidden.
 //
 export function corroborated(cell, models) {
-  return (cell.co_models || []).some(
-    (set) => set.length >= 2 && set.some((m) => models.has(m)));
+  return concurCount(cell, models) >= 2;
+}
+
+// How many models share this cell — 0 when none corroborate it, otherwise the size
+// of the LARGEST co_models set that includes a model still on screen. The largest,
+// because a cell can carry several sets and the strongest agreement is the one a
+// reader is being shown; it is also what keeps the count monotone, so a cell can
+// never read as "2 models" while a three-way set sits in the same row.
+//
+// Same `some` rule as above, and for the same measured reason: agreement does not
+// stop being true because the corroborating model is hidden.
+export function concurCount(cell, models) {
+  let best = 0;
+  for (const set of cell.co_models || []) {
+    if (set.length >= 2 && set.length > best && set.some((m) => models.has(m))) {
+      best = set.length;
+    }
+  }
+  return best;
 }
 
 export function worstSeverity(forecasts) {

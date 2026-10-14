@@ -24,8 +24,9 @@
 import {STREAMS_LAYERS, STREAMS_SOURCE_LAYER, STREAMS_SRC, STREAMS_TILES_URL,
   STREAM_ATTRIBUTION, STREAM_COLOR, STREAM_OPACITY, STREAM_ORDER_DOMAIN,
   STREAM_ORDER_FIELD, STREAM_WIDTH_BASE, STREAM_WIDTH_MAX,
-  STREAM_ZOOM_SCALE} from "../config.js";
+  STREAM_ZOOM_SCALE, streamMinOrder} from "../config.js";
 import {applyLayerOrder, map} from "../map.js";
+import {view} from "../settings.js";
 
 let on = false;
 
@@ -82,6 +83,25 @@ function ensureLayers() {
       "line-width": widthExpr(),
     },
   });
+  applyStreamStyle();          // the layer is created unfiltered; apply the cut
+}
+
+/**
+ * The density cut, as a filter on Strahler order.
+ *
+ * Filter rather than opacity or width: a thinned network has to stop being drawn,
+ * not be drawn faintly, or the thicket is still there in grey. At full density no
+ * filter is set at all rather than `>= 1` — a reach whose order the tiles do not
+ * carry would fail a numeric test and vanish, and "everything" has to mean it.
+ */
+export function applyStreamStyle() {
+  const min = streamMinOrder(view.streamDensity);
+  for (const id of STREAMS_LAYERS) {
+    if (!map.getLayer(id)) continue;
+    map.setFilter(id, min <= 1
+      ? null
+      : [">=", ["to-number", ["get", STREAM_ORDER_FIELD]], min]);
+  }
 }
 
 export function setStreamsOn(next) {

@@ -1,9 +1,9 @@
 // The right-hand side panel: legends, forecast tiles, impact.
 // Renders only; the actions its controls fire are injected by main.js, which keeps
 // the panel free of imports from the layers that call it.
-import {FIELD_LABELS, FLASH_MODELS, FLASH_TIER, FLASH_TIERS, MODEL_HOME, PANEL_MODELS, RIVER_ID_LABEL, SEVERITY, SEV_KEYS} from "./config.js";
+import {CONCUR_ANY_LABEL, CONCUR_COUNTS, CONCUR_LABEL, FIELD_LABELS, FLASH_MODELS, FLASH_TIER, FLASH_TIERS, MODEL_HOME, PANEL_MODELS, RIVER_ID_LABEL, SEVERITY, SEV_KEYS} from "./config.js";
 import {fillSource, flashChanceLabel, flashNearLabel, fmtCount, fmtFlashIssued, fmtValue, inkOn, modelLabel, modelLink, nearLabel, worstSeverity} from "./format.js";
-import {flashFill, flashOutline, paletteColor, rampFor, sevColor, unitLabel, view, visibleFlashModels, visibleModels, visibleSeverities, visibleTiers} from "./settings.js";
+import {flashFill, flashOutline, paletteColor, rampFor, sevColor, sharedConcurRamp, unitLabel, view, visibleFlashModels, visibleModels, visibleSeverities, visibleTiers} from "./settings.js";
 import {icon} from "./icons.js";
 
 // The panel imports no layer module: the layers call in to it, never the other way
@@ -82,11 +82,21 @@ function heatKeyHtml(m) {
   return `<div class="mb-2">` + bar(rampFor(m)) + concurBarHtml(bar) + scale + `</div>`;
 }
 
-const concurBarHtml = (bar) => (view.concurHeat
-  ? `<div class="flex items-center gap-1.5 mt-1.5">` +
-    `<div class="flex-1">${bar(view.concurRampId)}</div>` +
-    `<span class="text-[10px] font-semibold text-slate-400 shrink-0">2+ models</span></div>`
-  : "");
+// One bar per agreement count — unless the counts share a ramp, in which case one
+// bar reading "2+ models". Two identical bars under two different labels would be
+// the legend insisting on a distinction nothing on the map is drawing.
+const concurRow = (bar, rampId, label) =>
+  `<div class="flex items-center gap-1.5 mt-1.5">` +
+  `<div class="flex-1">${bar(rampId)}</div>` +
+  `<span class="text-[10px] font-semibold text-slate-400 shrink-0">${label}</span></div>`;
+
+const concurBarHtml = (bar) => {
+  if (!view.concurHeat) return "";
+  const one = sharedConcurRamp();
+  return one
+    ? concurRow(bar, one, CONCUR_ANY_LABEL)
+    : CONCUR_COUNTS.map((n) => concurRow(bar, view.concurRamp[n], CONCUR_LABEL[n])).join("");
+};
 
 const colorSwatch = (style) =>
   `<span class="inline-block w-3 h-3 rounded-sm shrink-0" style="${style}"></span>`;
@@ -107,12 +117,18 @@ function modelLegendHtml(m) {
   // here as well — one swatch at the worst rung, which is the end of the ramp a
   // reader will actually be looking at.
   if (view.concurHeat) {
-    entries.push({
-      swatch: colorSwatch(
-        `background:${paletteColor(view.concurRampId, SEV_KEYS[SEV_KEYS.length - 1])};` +
-        `border:1px solid rgb(255 255 255 / .25)`),
-      label: "2+ models",
-    });
+    // Same collapse as the heat key: one swatch while the counts share a ramp.
+    const one = sharedConcurRamp();
+    const swatchFor = (rampId) => colorSwatch(
+      `background:${paletteColor(rampId, SEV_KEYS[SEV_KEYS.length - 1])};` +
+      `border:1px solid rgb(255 255 255 / .25)`);
+    if (one) {
+      entries.push({swatch: swatchFor(one), label: CONCUR_ANY_LABEL});
+    } else {
+      for (const n of CONCUR_COUNTS) {
+        entries.push({swatch: swatchFor(view.concurRamp[n]), label: CONCUR_LABEL[n]});
+      }
+    }
   }
   return tileLegend(entries);
 }
@@ -182,12 +198,11 @@ export function renderPanel(props) {
       collapseBtn(bodyId, "text-slate-400 hover:text-slate-200") + `</div>`;
     const body = fcs.map((fc, i) => {
       // A Flood Hub cell the pipeline INFERRED rather than gauged. Flood Hub warns
-      // at points, so the river between two warned gauges would otherwise be blank;
-      // the backend walks HydroRIVERS between them and carries the upstream gauge's
-      // forecast down the span. Every row below therefore describes that gauge, not
-      // this hexagon — a cell at the far end of a 200-cell span is a long way from
-      // it — so the id and the "Near" row are relabelled to say whose numbers these
-      // are, and the tile carries a line explaining why there is no gauge here.
+      // at points, so the gauge's own river would otherwise be blank; the backend
+      // spreads it along the HydroRIVERS reach the gauge stands on. Every row below
+      // therefore describes that gauge, not this hexagon — so the id and the
+      // "Near" row are relabelled to say whose numbers these are, and the tile
+      // carries a line explaining why there is no gauge here.
       const from = fillSource(fc);
       const rows = FIELD_LABELS.map(([k, label]) => {
         let lbl = k === "native_id" ? (RIVER_ID_LABEL[m] || label) : label;
@@ -206,9 +221,8 @@ export function renderPanel(props) {
       }).join("");
       const note = from
         ? `<p class="mt-2 text-[11.5px] leading-snug text-slate-400 italic">` +
-          `No gauge in this ${view.dataset.unit.toLowerCase()}. It sits on the river ` +
-          `between this gauge and the next warned one downstream, and carries the ` +
-          `upstream forecast.</p>`
+          `No gauge in this ${view.dataset.unit.toLowerCase()}. It sits on the same ` +
+          `river reach as this gauge, and carries that gauge's forecast.</p>`
         : "";
       return `<dl class="grid grid-cols-[128px_1fr] gap-x-2.5 gap-y-1 text-[12.5px]${i ? " mt-2 pt-2 border-t border-slate-700/50" : ""}">${rows}</dl>${note}`;
     }).join("");
@@ -229,7 +243,7 @@ export function renderPanel(props) {
   const noneShown = (models, set) => !models.some((m) => set.has(m)) ?
     `<div class="rounded-[10px] border border-dashed border-slate-700 px-3.5 py-3 mb-3 ` +
     `text-slate-400 text-[12px] leading-snug">No models selected. Choose them under ` +
-    `<span class="text-slate-200 font-semibold">Filters</span> on the map.</div>` : "";
+    `<span class="text-slate-600 font-semibold">Filters</span> on the map.</div>` : "";
 
   // Section heading (the largest text in the panel) with a collapse chevron.
   const sectionHeader = (title, target, iconName) =>
@@ -296,10 +310,11 @@ export function renderPanel(props) {
       `</div><p class="text-slate-400 text-[12px] mt-1.5">Totals across the whole ${unitLabel(props).toLowerCase()}.</p></div></div>`
     : "";
 
-  // The app opens with the concurrence filter ON, which hides about 96% of the
-  // flagged cells. Unannounced that reads as a quiet day rather than as a filter,
-  // so it says so where the hidden forecasts would have been, and names the control
-  // that turns it off. Amber rather than slate: a state to notice, not a label.
+  // The concurrence filter hides about 96% of the flagged cells. Unannounced that
+  // reads as a quiet day rather than as a filter, so it says so where the hidden
+  // forecasts would have been, and names the control that turns it off. Amber
+  // rather than slate: a state to notice, not a label. It no longer fires at boot —
+  // the filter opens off — but it is the same strong effect whenever it is on.
   const concurNoticeHtml = view.concurrenceOnly
     ? `<div class="mb-3 rounded-[10px] border border-amber-300 bg-amber-50 px-3 py-2">` +
       `<div class="flex items-start gap-1.5">` +

@@ -1,15 +1,17 @@
 // Display Options: everything about how the map is drawn, split into three tabs —
-// the flagged areas (cells or heat), the flash-flood overlay, and the map itself.
+// the flagged areas (cells or heat), the flash-flood overlay, and the context the
+// two are read against.
 // The tabs exist so the panel stays short enough to leave most of the map visible.
 //
 // Rendering only. Which forecasts reach the map — models, severities, concurrence,
 // flash tiers — belongs to the Filters menu next door. Keeping both halves here is
 // what pushed this panel past its own height into a scrollbar, and it meant the
 // severity rung names appeared under two unrelated headings in the same column.
-import {FLASH_TIER, FLASH_TIERS, PANEL_MODELS, SEVERITY, SEV_KEYS} from "../config.js";
+import {CONCUR_COUNTS, CONCUR_LABEL, FLASH_TIER, FLASH_TIERS, PANEL_MODELS, SEVERITY, SEV_KEYS, STREAM_DENSITY_MAX, streamMinOrder} from "../config.js";
 import {applyFillStyle} from "../layers/cells_tiles.js";
 import {applyHeatStyle} from "../layers/heat.js";
 import {applyFlashStyle} from "../layers/flash.js";
+import {applyStreamStyle, setStreamsOn, streamsOn} from "../layers/streams.js";
 import {dropdownControl} from "../ui/dropdown.js";
 import {check, head, note, resetButton, rule} from "../ui/form.js";
 import {modelLabel} from "../format.js";
@@ -21,7 +23,7 @@ let actions = {onDisplayChange() {}};
 export function init(a) { actions = Object.assign(actions, a); }
 
 let displayPanelEl = null;          // the menu's panel, once mounted
-let activeTab = "areas";            // areas | flash | map
+let activeTab = "areas";            // areas | flash | context
 let rebuildBody = null;             // set once the panel is mounted; see restate()
 // Whether the per-model ramp rows are showing. Closed, the block is one row —
 // which is the whole truth whenever the models share a ramp, because then the
@@ -104,6 +106,23 @@ const weightRow = (k, label, width) =>
 const asPercent = (v) => `${v}%`;
 const asMultiple = (v) => `${(v / 100).toFixed(1)}\u00d7`;
 
+// The hundredths dance above is for values `view` stores as 0..1. A count — a
+// Strahler order, say — is already the number the slider carries, so it gets its
+// own row rather than being multiplied by 100 and divided back.
+const intRange = (id, label, value, min, max, fmt) =>
+  `<label style="display:flex;align-items:center;gap:7px;margin-bottom:4px">` +
+  `<span style="white-space:nowrap;width:46px">${label}</span>` +
+  `<input type="range" id="${id}" min="${min}" max="${max}" step="1" ` +
+  `value="${value}" style="flex:1;accent-color:#0284c7;cursor:pointer">` +
+  `<span id="${id}-val" style="width:38px;text-align:right;color:#64748b">` +
+  `${fmt(value)}</span></label>`;
+
+// What the density readout says: the cut it is making, not a made-up percentage.
+const densityLabel = (d) => {
+  const min = streamMinOrder(d);
+  return min <= 1 ? "all" : `\u2265${min}`;
+};
+
 const pctRange = (id, label, value, min = 0, max = 100, step = 5, fmt = asPercent) =>
   `<label style="display:flex;align-items:center;gap:7px;margin-bottom:4px">` +
   `<span style="white-space:nowrap;width:46px">${label}</span>` +
@@ -180,9 +199,8 @@ function areasTab() {
     head("Concurrence") +
     check("disp-concur-heat", "Color concurrence separately", view.concurHeat) +
     (view.concurHeat
-      ? rampRow("concur", "Concurrence", view.concurRampId) +
-        note(`${view.dataset.unit}s two or more models agree on take this ramp ` +
-          `instead of their model's, in both views.`)
+      ? CONCUR_COUNTS.map((n) =>
+          rampRow(`concur${n}`, CONCUR_LABEL[n], view.concurRamp[n])).join("")
       : "");
 
   // Outline weights, and only the weights — which rungs are drawn at all is a
@@ -211,19 +229,38 @@ function areasTab() {
     .filter(Boolean).join(rule);
 }
 
-// The third tab: the settings that belong to the map rather than to either layer
-// on it. The pointer label is drawn over flash polygons as readily as over cells,
-// so it has no business on either layer's tab.
+// The third tab: what the hazard layers are read AGAINST rather than either of
+// them. The stream network is the context itself, and the pointer label is drawn
+// over flash polygons as readily as over cells, so it has no business on either
+// layer's tab.
 //
-// It had company here — a "flash floods above cells" switch — until that stopped
-// being a question. Flash now always draws under both renderings of the cells; see
-// layerOrder() in map.js for why that has one right answer.
-function mapTab() {
-  return head("Pointer") +
+// It had more company once — a "flash floods above cells" switch — until that
+// stopped being a question. Flash now always draws under both renderings of the
+// cells; see layerOrder() in map.js for why that has one right answer.
+function contextTab() {
+  // The stream network used to have a map control of its own, two buttons down the
+  // same column. One checkbox does not earn a dropdown, and it is a rendering
+  // choice about the map like everything else on this tab.
+  const contextBlock =
+    head("River network") +
+    check("disp-streams", "GEOGLOWS V3 streams", streamsOn(), "#2b7fd4") +
+    (streamsOn()
+      ? intRange("disp-stream-density", "Density", view.streamDensity,
+          1, STREAM_DENSITY_MAX, densityLabel) +
+        note("Zoomed in over one basin the whole network is a thicket. Lower this " +
+          "to drop the smallest tributaries a rung at a time — the readout is the " +
+          "Strahler order it keeps.", 7)
+      : note("The network itself, drawn under the flagged areas. It carries no " +
+          "forecast of its own."));
+
+  const pointerBlock =
+    head("Pointer") +
     check("disp-cell-tip",
       `Label the ${view.dataset.unit.toLowerCase()} under the cursor`, view.cellTooltip) +
     note("Hovering still lights the shape up and clicking still selects it; " +
       "this is only the label that follows the cursor.");
+
+  return [contextBlock, pointerBlock].join(rule);
 }
 
 function flashTab() {
@@ -242,7 +279,7 @@ function flashTab() {
 // ---- The control -----------------------------------------------------------
 
 export function displayControl() {
-  const TABS = [["areas", "River"], ["flash", "Flash"], ["map", "Map"]];
+  const TABS = [["areas", "River"], ["flash", "Flash"], ["context", "Context"]];
 
   return dropdownControl({
     iconName: "monitor",
@@ -280,7 +317,7 @@ export function displayControl() {
 
       function renderTab() {
         body.innerHTML =
-          activeTab === "areas" ? areasTab() : activeTab === "flash" ? flashTab() : mapTab();
+          activeTab === "areas" ? areasTab() : activeTab === "flash" ? flashTab() : contextTab();
         paintTabs();
         bindBody();
         if (activeTab === "areas") highlightDataset();
@@ -295,7 +332,7 @@ export function displayControl() {
           const key = sel.dataset.key;
           if (key === ALL_MODELS) for (const m of PANEL_MODELS) modelRamp[m] = sel.value;
           else if (key === "flash") view.flashRampId = sel.value;
-          else if (key === "concur") view.concurRampId = sel.value;
+          else if (key.startsWith("concur")) view.concurRamp[Number(key.slice(6))] = sel.value;
           else modelRamp[key] = sel.value;
           // Once two models are on different ramps, a cell holding both has no
           // single right color — so the moment they stop matching, concurrence
@@ -306,6 +343,23 @@ export function displayControl() {
           renderTab();                    // the sample beside the picker follows
           actions.onDisplayChange();      // the map and the panel's legends
         }));
+
+        // --- context tab ---
+        const streamsCb = $("#disp-streams");
+        if (streamsCb) streamsCb.addEventListener("change", (e) => {
+          setStreamsOn(e.target.checked);
+          renderTab();                    // the density slider appears with it
+        });
+
+        const density = $("#disp-stream-density");
+        if (density) {
+          const readout = body.querySelector("#disp-stream-density-val");
+          density.addEventListener("input", () => {
+            view.streamDensity = Number(density.value);
+            if (readout) readout.textContent = densityLabel(view.streamDensity);
+            applyStreamStyle();           // one setFilter; nothing refetches
+          });
+        }
 
         const rampsToggle = $("#disp-ramps-toggle");
         if (rampsToggle) rampsToggle.addEventListener("click", () => {
@@ -414,6 +468,7 @@ export function displayControl() {
       // their own reset, in their own menu.
       panel.querySelector("#disp-reset").addEventListener("click", () => {
         restoreDisplayDefaults();
+        applyStreamStyle();             // the density cut is a Display setting too
         // The ramp disclosure is menu state, not a `view` setting, so the restore
         // cannot reach it — and a tab that came back on its defaults with a block
         // still hanging open has not quite been restored.

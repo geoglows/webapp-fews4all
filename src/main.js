@@ -26,8 +26,8 @@ import * as panel from "./panel.js";
 import * as cells from "./layers/cells_tiles.js";
 import * as heat from "./layers/heat.js";
 import * as flash from "./layers/flash.js";
+import * as streams from "./layers/streams.js";
 import {basemapControl} from "./controls/basemap.js";
-import {contextControl} from "./controls/context.js";
 import {pointerControl} from "./controls/pointer.js";
 import * as display from "./controls/display.js";
 import * as filters from "./controls/filters.js";
@@ -85,12 +85,19 @@ filters.init({
 map.once("load", () => {
   // Pan/select, directly under the zoom buttons it shares a column with.
   map.addControl(pointerControl(), "top-left");
+  // The river network, on from the start: the flagged cells are hexagons over an
+  // empty basemap without it, and "which river is this" is the first question a
+  // warned cell raises. Switched on BEFORE the Display menu is mounted, so its
+  // Map tab renders from the state it is reporting rather than being corrected a
+  // moment later. The layer's own control used to be a third dropdown in this
+  // column; it is one checkbox, and it lives on that tab now.
+  streams.setStreamsOn(true);
+
   // The stacked dropdowns in the top-right column. Display and Filters sit next to
   // each other: how the map is drawn, then what reaches it.
   map.addControl(basemapControl(), "top-right");
   map.addControl(display.displayControl(), "top-right");
   map.addControl(filters.filtersControl(), "top-right");
-  map.addControl(contextControl(), "top-right");
   // Wording is fixed now that cells are the only flagged-area build.
   view.dataset = DATASETS["h3-telescoping"];
   panel.applyDatasetWording();

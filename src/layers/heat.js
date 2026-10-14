@@ -13,9 +13,9 @@
 // the surface has none of: a heat map you cannot click is a picture, and the panel
 // still has to answer for a specific cell. See cells_tiles.js.
 //
-// ONE SURFACE PER MODEL, PLUS ONE FOR CONCURRENCE — A PARTITION
+// THE SURFACES, AND WHY THERE ARE SOMETIMES FEWER OF THEM
 //
-// Every flagged cell goes into exactly ONE of them. Never two: a cell feeding both
+// Every flagged cell goes into exactly ONE bucket. Never two: a cell feeding both
 // its model's surface and the concurrence surface would make each hotter, and the
 // reader would be seeing one cell twice.
 //
@@ -23,12 +23,26 @@
 //
 //   concurrence     two or more models agree there, and the viewer has asked for
 //                   concurrence to be colored separately
+//   merged          otherwise, WHEN every model on screen shares one ramp
 //   its model       otherwise — the model whose forecast set the cell's severity,
 //                   the same owner rule the hexagons use, so a cell is the same
 //                   color in both views
 //
 // At the base resolution a cell holding two models IS a concurrence cell, so with
 // that option off "which model owns this" always has exactly one answer.
+//
+// The merged bucket exists because separate layers are not free even when the
+// points inside them are disjoint. MapLibre computes density PER LAYER, runs it
+// through that layer's ramp, and composites the results — so two surfaces in the
+// same amber overlap into something darker than either, and on the default palette
+// (all three models amber) every boundary between two models' territory drew a
+// seam that said nothing about the data. One cell was never counted twice; the
+// LAYERS were being blended. When the ramps agree there is nothing for separate
+// layers to express, so they collapse into one and the density is summed once,
+// which is the number the ramp was built to read.
+//
+// The moment any model is given a color of its own, the per-model surfaces come
+// back: then the seam is the point.
 //
 // Hue carries the model (or the agreement), brightness carries severity. That split
 // is the point: a density channel cannot hold a categorical fact, because a tight
@@ -56,9 +70,9 @@
 // concentration IS information — but it means the color is not a reading of any one
 // cell. The cell is what the panel is for.
 import {cellToLatLng} from "h3-js";
-import {EMPTY_FC, HEAT_CONCUR_LAYER, HEAT_CONCUR_SRC, HEAT_MODEL_LAYER, HEAT_MODEL_SRC, PANEL_MODELS, SEV_KEYS, heatWeight} from "../config.js";
+import {CONCUR_COUNTS, EMPTY_FC, HEAT_CONCUR_LAYER, HEAT_CONCUR_SRC, HEAT_MERGED_LAYER, HEAT_MERGED_SRC, HEAT_MODEL_LAYER, HEAT_MODEL_SRC, PANEL_MODELS, SEV_KEYS, heatWeight} from "../config.js";
 import {applyLayerOrder, map} from "../map.js";
-import {corroborated, darken, rgba} from "../format.js";
+import {concurCount, darken, rgba} from "../format.js";
 import {paletteColor, rampFor, view, visibleModels, visibleSeverities} from "../settings.js";
 
 let release = null;
@@ -85,6 +99,21 @@ function baseRes() {
 // concurrence layer is empty.
 function splitConcur() {
   return view.heatOn && view.concurHeat;
+}
+
+/**
+ * The one ramp every model on screen is drawn in, or null when they differ.
+ *
+ * Read off the models actually being DRAWN rather than all of them: with two
+ * filtered out, whether the third agrees with hidden models is not a question the
+ * surface can be wrong about. One model showing is trivially merged, which is also
+ * the right answer — it was already going to be a single layer.
+ */
+function mergedRamp() {
+  const on = PANEL_MODELS.filter((m) => visibleModels.has(m));
+  if (!on.length) return null;
+  const first = rampFor(on[0]);
+  return on.every((m) => rampFor(m) === first) ? first : null;
 }
 
 /**
@@ -132,8 +161,15 @@ function pickVisible(fcs) {
 
 // The bucket key the concurrence surface answers to. Not a model name, and chosen
 // so it cannot collide with one.
-const CONCUR = "__concur";
-const BUCKETS = [...PANEL_MODELS, CONCUR];
+// One per agreement count, so 2-model and 3-model cells can be told apart.
+const CONCUR = (n) => `__concur${n}`;
+const CONCUR_KEYS = CONCUR_COUNTS.map(CONCUR);
+const countOf = (key) => CONCUR_COUNTS[CONCUR_KEYS.indexOf(key)];
+const isConcur = (key) => CONCUR_KEYS.includes(key);
+// ...and the one every model pours into while they share a ramp. Same rule for the
+// name: it must not collide with a model key.
+const MERGED = "__merged";
+const BUCKETS = [...PANEL_MODELS, ...CONCUR_KEYS, MERGED];
 
 /**
  * Every bucket's points, from ONE pass over the cells.
@@ -149,14 +185,18 @@ function buckets() {
   if (!release || res == null) return out;
 
   const split = splitConcur();
+  // Asked once for the whole pass, not per cell: it reads every model's ramp.
+  const merged = mergedRamp() !== null;
   for (const g of sites) {
     const cell = g.cell;
     // Asked once and reused: both the partition and the concurrence filter want the
     // same answer, and it is the more expensive of the per-cell tests. It has to be
     // the SAME test the cells apply, or a cell could pass the filter underneath and
     // be missing from the surface above it.
-    const agrees = split || view.concurrenceOnly
-      ? corroborated(cell, visibleModels) : false;
+    // The COUNT, not a yes/no: it picks which concurrence surface the cell lands
+    // on as well as answering the filter. 0 when nothing corroborates it.
+    const n = split || view.concurrenceOnly ? concurCount(cell, visibleModels) : 0;
+    const agrees = n >= 2;
 
     // Same filter the cells obey: the surface and the hexagons underneath it have
     // to be built from the same set, or clicking a warm patch would find nothing.
@@ -168,7 +208,15 @@ function buckets() {
     const w = heatWeight(sev);
     if (!(w > 0)) continue;
 
-    const list = out[split && agrees ? CONCUR : model];
+    // Severity decides the cell's weight and, through `model`, its hue — the worst
+    // rung showing, picked above. So a cell two models agree on is drawn once, in
+    // the color of the WORSE of their two forecasts, rather than twice or blended.
+    // A cell takes the HIGHEST count it qualifies for, so a three-way cell never
+    // falls into the two-way surface on the way past.
+    const bucket = split && agrees
+      ? CONCUR(CONCUR_COUNTS.filter((c) => n >= c).pop())
+      : merged ? MERGED : model;
+    const list = out[bucket];
     if (!list) continue;              // a model this build does not draw
     list.push({
       type: "Feature",
@@ -180,11 +228,25 @@ function buckets() {
 }
 
 // Where a bucket's points live, and the ramp it is painted in.
-const srcOf = (key) => (key === CONCUR ? HEAT_CONCUR_SRC : HEAT_MODEL_SRC(key));
-const layerOf = (key) => (key === CONCUR ? HEAT_CONCUR_LAYER : HEAT_MODEL_LAYER(key));
-const rampOf = (key) => (key === CONCUR ? view.concurRampId : rampFor(key));
-// A model's surface follows the heat toggle; concurrence follows its own as well.
-const shown = (key) => (key === CONCUR ? splitConcur() : view.heatOn);
+const srcOf = (key) =>
+  isConcur(key) ? HEAT_CONCUR_SRC(countOf(key))
+    : key === MERGED ? HEAT_MERGED_SRC : HEAT_MODEL_SRC(key);
+const layerOf = (key) =>
+  isConcur(key) ? HEAT_CONCUR_LAYER(countOf(key))
+    : key === MERGED ? HEAT_MERGED_LAYER : HEAT_MODEL_LAYER(key);
+// The merged surface falls back to the first model's ramp when there is no shared
+// one — it is hidden in that case, and a layer still needs a color to be created.
+const rampOf = (key) =>
+  isConcur(key) ? view.concurRamp[countOf(key)]
+    : key === MERGED ? (mergedRamp() || rampFor(PANEL_MODELS[0]))
+      : rampFor(key);
+// Concurrence follows its own toggle. The merged surface and the per-model ones are
+// alternatives, so exactly one side of that pair is ever drawn.
+const shown = (key) => {
+  if (isConcur(key)) return splitConcur();
+  const merged = mergedRamp() !== null;
+  return view.heatOn && (key === MERGED ? merged : !merged);
+};
 
 // How much wider the blur has to be at this latitude to cover the same ground.
 //

@@ -69,7 +69,12 @@ export const FIELD_LABELS = [
   ["native_id", "River ID"],
   ["district", "Near"],
   ["return_period_yr", "Return period"],
-  ["peak_discharge_cms", "Mean discharge"], //this will need to be changed into peak, the info from geoglows is in mean discharge.
+  // "Flow", not "peak" and not "mean". The three models do not put the same
+  // quantity here — GEOGLOWS delivers a mean, Flood Hub a published peak, GloFAS
+  // nothing at all — and they route and predict differently enough that naming it
+  // either way asserts something about the number that is only true for one of
+  // them. The honest label is the thing they agree it is: a discharge.
+  ["flow_cms", "Flow"],
   ["issued_time", "Issued"],
   ["start_time", "Start"],
   ["peak_time", "Peak"],
@@ -83,11 +88,11 @@ export const RIVER_ID_LABEL = {
   flash: "Area",
 };
 
-// Flood Hub reports gauges, so the river between two warned gauges would be blank.
-// The pipeline walks HydroRIVERS between them and fills it with the UPSTREAM
-// gauge's forecast; a filled cell carries that gauge in place of an id of its own,
-// as `from <gaugeId>` (backend/common/hydrorivers.py, FLOOD_HUB_FILL_PREFIX). The
-// two spellings have to match — this is the only place the front end knows it.
+// Flood Hub reports gauges, so a warning lands as one hexagon with its own river
+// blank. The pipeline spreads it onto the HydroRIVERS reach the gauge stands on; a
+// filled cell carries that gauge in place of an id of its own, as `from <gaugeId>`
+// (backend/common/hydrorivers.py, FLOOD_HUB_FILL_PREFIX). The two spellings have
+// to match — this is the only place the front end knows it.
 export const FILL_PREFIX = "from ";
 
 // Every pipeline stamps the FeatureCollection with a `kind`, so all the
@@ -254,6 +259,18 @@ export const STREAM_ATTRIBUTION =
 export const STREAM_WIDTH_BASE = 4;     // the thinnest reach in the ramp
 export const STREAM_WIDTH_MAX = 10;     // the thickest
 export const STREAM_ORDER_DOMAIN = [2, 10];
+// The density control, in Strahler order. The network is drawn from tiles that
+// already carry their own level of detail, so zooming in correctly reveals more of
+// it — and close in, over a basin, "all of it" is a thicket. The honest knob is a
+// single `>=` on the order field, which is what this is: one number, dropping the
+// smallest remaining tributaries a rung at a time. It is deliberately NOT a second
+// zoom-keyed LOD table racing the one baked into the archive.
+//
+// The slider counts the other way from the filter so that right means more, which
+// is what a slider called Density has to mean. 9 draws everything.
+export const STREAM_DENSITY_MAX = 9;
+export const streamMinOrder = (density) =>
+  STREAM_DENSITY_MAX + 1 - Math.max(1, Math.min(STREAM_DENSITY_MAX, density || STREAM_DENSITY_MAX));
 // Multiplier on that ramp by zoom: global, regional, local, then wider still so a
 // reach stays easy to click.
 export const STREAM_ZOOM_SCALE = [[3, 0.25], [7, 0.5], [12, 1], [16, 2.2]];
@@ -289,8 +306,20 @@ export const STREAM_OPACITY = [[3, 0.65], [9, 0.95]];
 // only the ramp differs, so the hue is carrying the one fact the severity channel
 // cannot (how many models are saying it) without touching what the brightness
 // means (how bad they say it is).
-export const HEAT_CONCUR_SRC = "heat-concur-src";
-export const HEAT_CONCUR_LAYER = "heat-concur";
+// Agreement is colored by HOW MANY models share the cell, not just whether any do,
+// so there is a surface and a ramp per count rather than one for "2 or more".
+// Three is empty in every release measured so far — Flood Hub reaches 182 cells and
+// never overlaps GEOGLOWS — but the tier is real, it is the one a reader would most
+// want to see, and a color that only appears on the day it matters is worth having
+// already chosen. Listed low to high; the cell takes the highest it qualifies for.
+export const CONCUR_COUNTS = [2, 3];
+export const CONCUR_LABEL = {2: "2 models", 3: "3 models"};
+// What the counts are called when they are all drawn the same and the legend has
+// nothing to tell apart. Naming each count beside an identical bar would be the
+// legend claiming a distinction the map is not making.
+export const CONCUR_ANY_LABEL = "2+ models";
+export const HEAT_CONCUR_SRC = (n) => `heat-concur-${n}-src`;
+export const HEAT_CONCUR_LAYER = (n) => `heat-concur-${n}`;
 
 // ...and one per model beside it. The surface used to be a single severity field
 // with one ramp, which meant the heat map was the one view where the models could
@@ -300,6 +329,18 @@ export const HEAT_CONCUR_LAYER = "heat-concur";
 // answer whenever concurrence is not being drawn apart.
 export const HEAT_MODEL_SRC = (m) => `heat-src-${m}`;
 export const HEAT_MODEL_LAYER = (m) => `heat-${m}`;
+
+// ...and ONE surface carrying all of them, for when they share a ramp.
+//
+// Not an optimisation. Two heatmap layers in the same colors do not add up to the
+// layer you would get from their points combined: each one computes its own
+// density, runs it through its own ramp and is then alpha-composited over the
+// other. Where two models' blurs overlap the result is darker than either —
+// 1-(1-a)^2 at the same opacity — so on the default palette, where all three are
+// amber, every model boundary was drawing a seam that meant nothing about the
+// data. Merged, the density is summed once, which is the number the ramp is for.
+export const HEAT_MERGED_SRC = "heat-merged-src";
+export const HEAT_MERGED_LAYER = "heat-merged";
 
 // How steeply the three rungs separate. A rung's weight is (rank / 3) ^ exponent,
 // so the curve is one number rather than three hand-set values that drift out of
@@ -327,7 +368,8 @@ export const LAYER_GROUPS = {
   // Concurrence above the models — within a group, earlier draws on top. The model
   // surfaces are disjoint so their order between themselves does not matter; it is
   // fixed to PANEL_MODELS anyway so a restack is never a reshuffle.
-  heat: [HEAT_CONCUR_LAYER, ...PANEL_MODELS.map(HEAT_MODEL_LAYER)],
+  heat: [...CONCUR_COUNTS.map(HEAT_CONCUR_LAYER), HEAT_MERGED_LAYER,
+    ...PANEL_MODELS.map(HEAT_MODEL_LAYER)],
   backdrop: [...STREAMS_LAYERS],
 };
 // Within one resolution: outline on top, then the split bands, and the

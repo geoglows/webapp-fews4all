@@ -2,7 +2,7 @@
 // the colors derived from it. `view` holds the values that get reassigned (an ESM
 // import binding cannot be assigned by the importing module); the Sets and the ramp
 // map are mutated in place, so they are exported directly.
-import {DEFAULT_COLOR, DEFAULT_DATASET, FLASH_TIER, FLASH_TIERS, PANEL_MODELS, RAMPS, SEVERITY, SEV_KEYS} from "./config.js";
+import {CONCUR_COUNTS, DEFAULT_COLOR, DEFAULT_DATASET, FLASH_TIER, FLASH_TIERS, PANEL_MODELS, RAMPS, SEVERITY, SEV_KEYS} from "./config.js";
 import {darken} from "./format.js";
 
 // ---- Display settings (all driven by the Display menu) --------------------
@@ -29,6 +29,16 @@ const DISPLAY_DEFAULTS = {
   // The severity heat map, and the view the app opens on. It answers the first
   // question a reader has — where is this bad — without asking them to tell three
   // models apart first. The per-model coloring is one checkbox away.
+  // How much of the stream network is drawn, as a Strahler-order cut. 6 on the
+  // slider keeps Strahler order 4 and above, rather than every tributary the
+  // archive holds. Zoomed out that is close to what the tiles' own level of detail
+  // was already showing; zoomed in over a basin it is the difference between a
+  // river and a thicket. The viewer can open it up to 9, which draws everything.
+  //
+  // The slider counts the opposite way from the order it keeps — right means more
+  // network — so this value is a position, not a Strahler number. See
+  // streamMinOrder in config.js, which is the one place the two are related.
+  streamDensity: 6,
   heatOn: true,
   heatOpacity: 0.6,
   heatRadius: 1,                    // multiplier on the zoom-scaled blur radius
@@ -38,7 +48,12 @@ const DISPLAY_DEFAULTS = {
   // than arrive at. Off, those cells fall back into the severity surface and are
   // told apart only by the panel.
   concurHeat: false,
-  concurRampId: "greens",
+  // The ramp per agreement count lives outside DISPLAY_DEFAULTS for the same
+  // reason the line widths do: Object.assign is shallow, so handing `view` the
+  // very object the defaults hold would let a picker edit what "Restore defaults"
+  // restores from. Both open on red, and on the same red — the counts are told
+  // apart only once the viewer says they should be.
+
 };
 // What the FILTERS menu restores, kept apart from the block above because the two
 // menus own different questions and each has its own reset. A setting listed here
@@ -49,17 +64,18 @@ const FILTER_DEFAULTS = {
   // everything else, and what this answers is the different question of what the
   // map looks like with the uncorroborated forecasts taken away.
   //
-  // ON at boot, for the cells and the heat map alike. That is a strong default —
-  // it hides roughly 96% of the flagged cells — so the panel says so plainly
-  // whenever it is in force, or an almost-empty map reads as no data rather than
-  // as a filter.
-  concurrenceOnly: true,
+  // OFF at boot. It hides roughly 96% of the flagged cells, which is too much to
+  // take away from someone who has not asked for it — the app should open showing
+  // what the models actually said. The panel still announces it whenever it IS in
+  // force, because an almost-empty map otherwise reads as a quiet day.
+  concurrenceOnly: false,
 };
 // Outline weight per severity, in pixels. Nested rather than flat so the three
 // read as one control, and copied rather than shared on every use — Object.assign
 // is shallow, so handing `view` the same object the defaults hold would let a
 // slider edit the thing "Restore defaults" restores from.
 const LINE_WIDTH_DEFAULTS = {warning: 1, danger: 1, extreme: 1};
+const CONCUR_RAMP_DEFAULTS = Object.fromEntries(CONCUR_COUNTS.map((n) => [n, "reds"]));
 // The flash side of the same control, seeded from each tier's own starting weight
 // rather than restated here — two places holding the same number is two places to
 // edit. Copied, never shared, for the reason above.
@@ -95,6 +111,7 @@ export const view = {
   ...FILTER_DEFAULTS,
   lineWidth: {...LINE_WIDTH_DEFAULTS},
   flashLineWidth: {...FLASH_LINE_WIDTH_DEFAULTS},
+  concurRamp: {...CONCUR_RAMP_DEFAULTS},
 };
 
 export const modelRamp = Object.fromEntries(PANEL_MODELS.map((m) => [m, DEFAULT_RAMP]));
@@ -116,6 +133,18 @@ export function paletteColor(id, sev) {
   const k = (sev || "").toLowerCase();
   const p = palettes.find((x) => x.id === id) || palettes[0];
   return (p && p[k]) || DEFAULT_COLOR;
+}
+
+/**
+ * The one ramp every agreement count is drawn in, or null when they differ.
+ *
+ * The counts open on the same red, so this is the usual case, and it is what lets
+ * the legend collapse to a single "2+ models" entry: two identical bars labelled
+ * "2 models" and "3 models" would be claiming a distinction the map is not making.
+ */
+export function sharedConcurRamp() {
+  const first = view.concurRamp[CONCUR_COUNTS[0]];
+  return CONCUR_COUNTS.every((n) => view.concurRamp[n] === first) ? first : null;
 }
 
 /** Default each model to the palette the release says it uses. */
@@ -178,6 +207,7 @@ export function restoreDisplayDefaults() {
   Object.assign(view, DISPLAY_DEFAULTS);
   view.lineWidth = {...LINE_WIDTH_DEFAULTS};
   view.flashLineWidth = {...FLASH_LINE_WIDTH_DEFAULTS};
+  view.concurRamp = {...CONCUR_RAMP_DEFAULTS};
   for (const m of PANEL_MODELS) modelRamp[m] = DEFAULT_RAMP;
 }
 
