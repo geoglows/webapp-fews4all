@@ -134,7 +134,7 @@ ADMIN_LEVELS = [(2, "geoBoundariesCGAZ_ADM2.gpkg"),
 ADMIN_READ_BATCH = 4000    # polygons per streamed read, to keep memory flat
 
 # ---- Styling (step 5) ------------------------------------------------------
-# Colour is owned here rather than in the front end, so a release carries the
+# Color is owned here rather than in the front end, so a release carries the
 # palette it was drawn with. The front end still switches between palettes live —
 # they are paint-only changes — but it chooses among the ones defined here rather
 # than inventing its own.
@@ -164,36 +164,50 @@ PALETTES = [
     {"id": "cividis", "label": "Cividis",
      "warning": "#bcae6c", "danger": "#727274", "extreme": "#243c6e"},
 
-    # ColorBrewer 3-class sequential (colorbrewer2.org), taken whole rather than
-    # sampled: these are published AS three classes, so the three rungs are the
-    # scheme, not a slice of it.
+    # ColorBrewer sequential (colorbrewer2.org), sampled from the NINE-class
+    # sequences at positions 2 / 4 / 6 rather than taken as the published 3-class
+    # schemes.
     #
-    # They run the opposite way round — dark is worst. That is ColorBrewer's own
-    # convention, and here it is also the readable one: composited at the default
-    # 30% fill over a light basemap, the palest swatch sits 2.2 to 3.7 dE from the
-    # bare paper, which is at or below the threshold where a colour is visible at
-    # all. Putting that rung on `extreme` would make the most serious cells the
-    # hardest ones to see. On `warning` it costs nothing — the darkest swatch
-    # carries `extreme` at 18 to 26 dE, well clear.
+    # The 3-class schemes were the obvious thing to use and they were too pale at
+    # the light end to see. Measured: composited at the default 30% fill over the
+    # light basemap, their lightest swatch sat 2.1 to 4.0 dE from the bare paper,
+    # which is at or below the threshold where a color registers at all — so a
+    # `warning` cell was, in practice, an unpainted one.
+    #
+    # Shifting all three rungs one notch up the 9-class ladder puts that swatch at
+    # 4.3 to 8.8 dE and leaves every neighbouring pair 7.0 to 11.8 dE apart, where
+    # before the span was 5.4 to 12.7 — so the low end roughly doubled in presence
+    # without any rung crowding its neighbour. All three got deeper, not just the
+    # first: lifting `warning` alone squeezed the gap to `danger` down to 3.2 dE
+    # on blues and purples, which is its own kind of unreadable.
+    #
+    # They still run dark-is-worst, which is ColorBrewer's own convention and the
+    # readable one here — the palest rung belongs on `warning`, where being quiet
+    # costs nothing, not on `extreme`.
     {"id": "blues", "label": "Blues",
-     "warning": "#deebf7", "danger": "#9ecae1", "extreme": "#3182bd"},
+     "warning": "#c6dbef", "danger": "#6baed6", "extreme": "#2171b5"},
     {"id": "greens", "label": "Greens",
-     "warning": "#e5f5e0", "danger": "#a1d99b", "extreme": "#31a354"},
+     "warning": "#c7e9c0", "danger": "#74c476", "extreme": "#238b45"},
     {"id": "oranges", "label": "Oranges",
-     "warning": "#fee6ce", "danger": "#fdae6b", "extreme": "#e6550d"},
+     "warning": "#fdd0a2", "danger": "#fd8d3c", "extreme": "#d94801"},
     {"id": "purples", "label": "Purples",
-     "warning": "#efedf5", "danger": "#bcbddc", "extreme": "#756bb1"},
+     "warning": "#dadaeb", "danger": "#9e9ac8", "extreme": "#6a51a3"},
     {"id": "reds", "label": "Reds",
-     "warning": "#fee0d2", "danger": "#fc9272", "extreme": "#de2d26"},
+     "warning": "#fcbba1", "danger": "#fb6a4a", "extreme": "#cb181d"},
 ]
-DEFAULT_PALETTE = "inferno"
+DEFAULT_PALETTE = "oranges"
 # Every model opens on the same palette. Models are told apart by the split-cell
-# bands and the panel, not by colour — and a cell whose models share a palette is
-# no longer split at all, it simply takes the worst severity's colour.
+# bands and the panel, not by color — and a cell whose models share a palette is
+# no longer split at all, it simply takes the worst severity's color.
+#
+# Oranges, matching the heat map the app opens on, so switching between the two
+# views changes what is drawn rather than what color everything is. Under the heat
+# map the cells take the heat's ramp anyway (see rampFor in src/settings.js); this
+# is what they fall back to with it off.
 MODEL_PALETTE = {
-    "geoglows": "inferno",
-    "flood_hub": "inferno",
-    "glofas": "inferno",
+    "geoglows": "oranges",
+    "flood_hub": "oranges",
+    "glofas": "oranges",
     "flash": "reds",
 }
 FLASH_PALETTE = "reds"
@@ -257,15 +271,10 @@ STREAM_ATTRS_CSV = os.path.join(BACKEND, "static", "stream_attrs.csv")
 # headroom without being a licence to chain half a basin together.
 STREAM_CHAIN_HOPS = 8
 
-# ---- ADM boundaries ------------------------------------------------------
-# geoBoundaries CGAZ, three levels in one archive, one layer each. The zoom a
-# level takes over at is shared with the front end (layers/boundaries.js) so the
-# tiling bands and the telescoping cannot drift apart.
-ADM_DIR = os.path.join(FILES, "International_boundaries")
-ADM_LEVELS = [0, 1, 2]                      # countries, regions, districts
-ADM_ZOOM = {0: 0, 1: 4, 2: 7}               # minimum zoom each level is drawn at
-ADM_TILES_URL = "pmtiles:///backend/static/tiles/adm.pmtiles"
-ADM_SOURCE_LAYER = "adm{level}"             # distinct names, so a merge keeps them apart
+# The ADM boundary layer that used to be tiled here is retired — every base map
+# already draws national and regional borders. geoBoundaries itself is still read,
+# by common/admin.py, for each forecast's "Near" district: see BOUNDARIES_DIR and
+# ADMIN_LEVELS above. The tile build is in Other/retired/build_adm_tiles.py.
 
 CELLS_TILES_URL = "pmtiles:///backend/static/tiles/cells.pmtiles"
 # One archive holds every resolution, each as its OWN named layer. The names have

@@ -19,11 +19,10 @@ const BASE = import.meta.env.BASE_URL; // public/ -> served from the site root
 export const RELEASE = "2026-09-23";
 export const RELEASE_BASE = `/backend/output/${RELEASE}/`;
 
+// One entry, because one file is still fetched from here. The cells, the basins,
+// the stream network and the ADM boundaries all used to be whole-world GeoJSON
+// downloads; they are vector tile archives now, or retired outright, and their
+// files are in Other/retired/.
 export const DATA = {
-  basins: BASE + "data_basins.geojson",
-  h3: BASE + "data_h3cells.geojson",
-  globalStreams: BASE + "data_streams.geojson",
-  // boundaries now come from backend/static/tiles/adm.pmtiles (see config.js
-  // ADM_TILES_URL); public/data_boundaries.geojson is no longer read.
   flash: BASE + "data_flash_floods.geojson",
 };

@@ -1,13 +1,19 @@
-// Display Options: everything about how the map is drawn, split into two tabs —
-// one for the flagged areas (cells or basins), one for the flash-flood overlay.
+// Display Options: everything about how the map is drawn, split into three tabs —
+// the flagged areas (cells or heat), the flash-flood overlay, and the map itself.
 // The tabs exist so the panel stays short enough to leave most of the map visible.
-import {DATASETS_MENU, FLASH_TIER, FLASH_TIERS, PANEL_MODELS, SEVERITY, SEV_KEYS} from "../config.js";
+//
+// Rendering only. Which forecasts reach the map — models, severities, concurrence,
+// flash tiers — belongs to the Filters menu next door. Keeping both halves here is
+// what pushed this panel past its own height into a scrollbar, and it meant the
+// severity rung names appeared under two unrelated headings in the same column.
+import {FLASH_TIER, FLASH_TIERS, PANEL_MODELS, SEVERITY, SEV_KEYS} from "../config.js";
 import {applyFillStyle} from "../layers/cells_tiles.js";
+import {applyHeatStyle} from "../layers/heat.js";
 import {applyFlashStyle} from "../layers/flash.js";
 import {dropdownControl} from "../ui/dropdown.js";
+import {check, head, note, resetButton, rule} from "../ui/form.js";
 import {modelLabel} from "../format.js";
-import {applyLayerOrder} from "../map.js";
-import {modelRamp, palettes, paletteColor, restoreDisplayDefaults, view, visibleSeverities, visibleTiers} from "../settings.js";
+import {modelRamp, palettes, paletteColor, restoreDisplayDefaults, view} from "../settings.js";
 
 // main.js injects what a settings change should trigger, so this control never
 // imports the orchestration that imports it.
@@ -15,8 +21,12 @@ let actions = {onDisplayChange() {}};
 export function init(a) { actions = Object.assign(actions, a); }
 
 let displayPanelEl = null;          // the menu's panel, once mounted
-let activeTab = "areas";            // areas | flash
+let activeTab = "areas";            // areas | flash | map
 let rebuildBody = null;             // set once the panel is mounted; see restate()
+// Whether the per-model ramp rows are showing. Closed, the block is one row —
+// which is the whole truth whenever the models share a ramp, because then the
+// three rows underneath each repeat what that row already says. See rampBlock().
+let rampsOpen = false;
 
 /**
  * Rebuild the menu from current settings.
@@ -40,10 +50,8 @@ export function highlightDataset() {
   });
 }
 
-const paletteLabel = (id) => (palettes.find((p) => p.id === id) || {}).label || id;
-
 // The three rungs of a palette as one small bar: warning, danger, extreme, left to
-// right. It sits beside the picker so the name in the list always has the colours
+// right. It sits beside the picker so the name in the list always has the colors
 // it stands for next to it — "Magma" means nothing on its own.
 const paletteSample = (id) =>
   `<span class="ramp-preview" data-for-sample="${id}" style="display:inline-flex;` +
@@ -77,27 +85,41 @@ const sharedRamp = (keys) => {
   return keys.every((m) => modelRamp[m] === first) ? first : null;
 };
 
-const head = (t) =>
-  `<div style="font-size:10px;color:#64748b;text-transform:uppercase;` +
-  `letter-spacing:.04em;margin:0 0 5px">${t}</div>`;
-const rule = `<div style="height:1px;background:#e2e8f0;margin:11px 0"></div>`;
-const check = (id, label, on, accent) =>
-  `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:3px">` +
-  `<input type="checkbox" id="${id}"${on ? " checked" : ""} ` +
-  `style="accent-color:${accent || "#0284c7"}">${label}</label>`;
-// One row per severity: whether it is drawn at all, and how heavy its outline is.
-// These were two separate blocks asking about the same three things, which meant
-// reading the rung name twice to change both. px rather than % on the weight,
-// because px is what MapLibre takes.
-const severityRow = (k, label, shown, width) =>
+// One row per severity rung: a name and the weight of its outline, in px — px
+// rather than % because px is what MapLibre takes. The checkbox that used to sit
+// in this row, deciding whether the rung was drawn at all, is in Filters now: the
+// two were merged to save height, and they answer different questions.
+const weightRow = (k, label, width) =>
   `<div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">` +
-  `<label style="display:flex;align-items:center;gap:6px;width:76px;cursor:pointer;` +
-  `white-space:nowrap">` +
-  `<input type="checkbox" id="disp-sev-${k}"${shown ? " checked" : ""} ` +
-  `style="accent-color:#0284c7">${label}</label>` +
+  `<span style="width:66px;white-space:nowrap;font-weight:400">${label}</span>` +
   `<input type="range" id="disp-lw-${k}" min="0" max="5" step="0.1" value="${width}" ` +
   `style="flex:1;accent-color:#0284c7;cursor:pointer" title="Outline weight, px">` +
   `<span id="disp-lw-${k}-val" style="width:26px;text-align:right;color:#64748b">` +
+  `${Number(width).toFixed(1)}</span></div>`;
+
+// A labelled range carrying its value as hundredths, so one control serves both an
+// opacity (0..1) and the spread multiplier. `fmt` turns the slider's integer into
+// what the readout says, because those two are not the same kind of number: an
+// opacity is a percentage of full, a spread is a multiple of the tuned blur.
+const asPercent = (v) => `${v}%`;
+const asMultiple = (v) => `${(v / 100).toFixed(1)}\u00d7`;
+
+const pctRange = (id, label, value, min = 0, max = 100, step = 5, fmt = asPercent) =>
+  `<label style="display:flex;align-items:center;gap:7px;margin-bottom:4px">` +
+  `<span style="white-space:nowrap;width:46px">${label}</span>` +
+  `<input type="range" id="${id}" min="${min}" max="${max}" step="${step}" ` +
+  `value="${Math.round(value * 100)}" style="flex:1;accent-color:#0284c7;cursor:pointer">` +
+  `<span id="${id}-val" style="width:38px;text-align:right;color:#64748b">` +
+  `${fmt(Math.round(value * 100))}</span></label>`;
+
+// The flash counterpart of weightRow. Wider label column than the river side —
+// "Highly likely" is a longer word than "Extreme".
+const tierWeightRow = (t, label, width) =>
+  `<div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">` +
+  `<span style="width:90px;white-space:nowrap;font-weight:400">${label}</span>` +
+  `<input type="range" id="disp-flw-${t}" min="0" max="5" step="0.1" value="${width}" ` +
+  `style="flex:1;accent-color:#0284c7;cursor:pointer" title="Outline weight, px">` +
+  `<span id="disp-flw-${t}-val" style="width:26px;text-align:right;color:#64748b">` +
   `${Number(width).toFixed(1)}</span></div>`;
 
 const slider = (id, value) =>
@@ -111,22 +133,97 @@ const slider = (id, value) =>
 // ---- Tab bodies ------------------------------------------------------------
 
 function areasTab() {
+  // The tab opens on the choice everything below it depends on: which of the two
+  // renderings the flagged areas get. Nothing but the toggle lives here, so the
+  // question reads as a question — the settings for whichever rendering it picks
+  // are further down, in a block named after that rendering.
+  const typeBlock =
+    head("Flagged area type") +
+    check("disp-heat", "Draw severity as heat", view.heatOn) +
+    (view.heatOn
+      ? note("One surface per model, in the colors below. Cells go invisible " +
+        "underneath but stay clickable — hover or select one and it comes back.")
+      : note("Cells are drawn as hexagons, in the colors below."));
+
+  // One ramp per model, and it now drives BOTH views — the model's hexagons and
+  // the model's own heat surface. There is no separate heat ramp any more.
+  //
+  // Only the "All models" row is shown while the models agree, because the three
+  // rows under it would then be three copies of it — 78px of panel height spent
+  // restating one word. The moment they stop agreeing the All row reads "Mixed",
+  // which is not a state anyone can act on, so the rows open themselves and stay
+  // open: `shared` is null exactly when they are the only way to read the ramps.
+  const shared = sharedRamp(PANEL_MODELS);
+  const open = rampsOpen || !shared;
+  const rampBlock =
+    head("Colors &nbsp;·&nbsp; per model") +
+    rampRow(ALL_MODELS, "All models", shared, true) +
+    (open ? PANEL_MODELS.map((m) => rampRow(m, modelLabel(m), modelRamp[m])).join("") : "") +
+    (shared
+      ? `<button type="button" id="disp-ramps-toggle" style="border:0;background:none;` +
+        `padding:0;margin:1px 0 0;cursor:pointer;font:inherit;font-weight:400;` +
+        `color:#0284c7">${open ? "Hide" : "Show"} each model</button>`
+      : "");
+
   // The H3/Basins switch is gone for now: the CSV pipeline builds cells only, and
   // an option that 404s is worse than no option. It comes back when basins are
   // rebuilt on the new backend.
-  return head("Appearance") +
-    rampRow(ALL_MODELS, "All models", sharedRamp(PANEL_MODELS), true) +
-    PANEL_MODELS.map((m) => rampRow(m, modelLabel(m), modelRamp[m])).join("") +
+  const cellBlock = view.heatOn ? "" :
+    head("Cells") +
     slider("disp-opacity", view.fillOpacity) +
-    check("disp-outline", "Outline only", view.outlineOnly) +
-    check("disp-flash-above", "Flash floods above cells", view.flashAboveCells) + rule +
+    check("disp-outline", "Outline only", view.outlineOnly);
 
-    head("Severity &nbsp;·&nbsp; shown and outline weight") +
-    SEV_KEYS.map((k) =>
-      severityRow(k, SEVERITY[k].label, visibleSeverities.has(k), view.lineWidth[k])).join("") + rule +
+  // Switched on automatically the moment the model ramps stop matching — see the
+  // ramp handler. With two models on different colors, a cell holding both has no
+  // single right answer, and this gives it one.
+  const concurBlock =
+    head("Concurrence") +
+    check("disp-concur-heat", "Color concurrence separately", view.concurHeat) +
+    (view.concurHeat
+      ? rampRow("concur", "Concurrence", view.concurRampId) +
+        note(`${view.dataset.unit}s two or more models agree on take this ramp ` +
+          `instead of their model's, in both views.`)
+      : "");
 
-    head("Highlight") +
-    check("disp-hatch", "Hatch where models concur", view.hatchOn);
+  // Outline weights, and only the weights — which rungs are drawn at all is a
+  // Filters question. Gone entirely under the heat map, where nothing has an
+  // outline to weight: a slider that moves and paints nothing is worse than no
+  // slider, and it is the block this tab can most afford to lose.
+  const weightBlock = view.heatOn ? "" :
+    head("Outline weight &nbsp;·&nbsp; px") +
+    SEV_KEYS.map((k) => weightRow(k, SEVERITY[k].label, view.lineWidth[k])).join("");
+
+  // The heat map's own two settings, the counterpart of the Cells block. Both
+  // blocks sit in the same place in the list and only one of them is ever built,
+  // so switching the type swaps a section rather than reshuffling the tab.
+  const heatBlock = !view.heatOn ? "" :
+    head("Heat map") +
+    pctRange("disp-heat-opacity", "Opacity", view.heatOpacity) +
+    // Floor at 0.7x, not lower. Measured: below that the blur is narrower than the
+    // gap between cell centres from z8 in (ratio 0.62 at 0.4x), so the surface
+    // breaks into separate dots — the exact failure the ground-constant radius was
+    // built to prevent. 0.7x is the lowest setting that still merges at every zoom.
+    pctRange("disp-heat-radius", "Spread", view.heatRadius, 70, 250, 10, asMultiple);
+
+  // Type, then the two settings that describe the data either way, then whichever
+  // rendering is on and what only it can be asked about.
+  return [typeBlock, rampBlock, concurBlock, cellBlock, weightBlock, heatBlock]
+    .filter(Boolean).join(rule);
+}
+
+// The third tab: the settings that belong to the map rather than to either layer
+// on it. The pointer label is drawn over flash polygons as readily as over cells,
+// so it has no business on either layer's tab.
+//
+// It had company here — a "flash floods above cells" switch — until that stopped
+// being a question. Flash now always draws under both renderings of the cells; see
+// layerOrder() in map.js for why that has one right answer.
+function mapTab() {
+  return head("Pointer") +
+    check("disp-cell-tip",
+      `Label the ${view.dataset.unit.toLowerCase()} under the cursor`, view.cellTooltip) +
+    note("Hovering still lights the shape up and clicking still selects it; " +
+      "this is only the label that follows the cursor.");
 }
 
 function flashTab() {
@@ -135,23 +232,28 @@ function flashTab() {
     slider("disp-flash-opacity", view.flashOpacity) +
     check("disp-flash-outline", "Outline only", view.flashOutlineOnly) + rule +
 
-    head("Tiers shown") +
+    head("Outline weight &nbsp;·&nbsp; px") +
     FLASH_TIERS.map((t) =>
-      check("disp-tier-" + t, FLASH_TIER[t].label, visibleTiers.has(t))).join("") +
+      tierWeightRow(t, FLASH_TIER[t].label, view.flashLineWidth[t])).join("") +
 
-    `<p style="font:400 11px system-ui,sans-serif;color:#94a3b8;margin:9px 0 0">` +
-    `Switch the overlay itself on or off from Flash Floods in the side panel.</p>`;
+    note("Switch the overlay on, and choose which tiers it shows, under Filters.", 9);
 }
 
 // ---- The control -----------------------------------------------------------
 
 export function displayControl() {
-  const TABS = [["areas", "River Floods"], ["flash", "Flash Floods"]];
+  const TABS = [["areas", "River"], ["flash", "Flash"], ["map", "Map"]];
 
   return dropdownControl({
     iconName: "monitor",
     title: "Display Options",
-    panelStyle: "padding:10px 12px;width:330px;max-height:min(560px,calc(100vh - 150px));" +
+    // 680 rather than the old 560. The cap was set when this menu held the filters
+    // too and was overflowing whatever it was given; with those gone, every default
+    // state renders at 419-531px and needs no cap at all. What is left for the cap
+    // to catch is one case: the per-model ramps opened AND concurrence colored
+    // separately AND the heat map off, which measures 657px. 680 clears it on any
+    // screen over ~810px tall, and `min` still yields to a shorter one.
+    panelStyle: "padding:10px 12px;width:364px;max-height:min(680px,calc(100vh - 150px));" +
       "overflow-y:auto;font:600 12px system-ui,sans-serif;color:#0f172a",
     render(panel) {
       // The tab bar is rendered once; only the body below it is swapped, so the
@@ -163,9 +265,7 @@ export function displayControl() {
           `<button type="button" class="disp-tab" data-tab="${key}" style="flex:1;border:0;` +
           `padding:5px 6px;border-radius:6px;cursor:pointer;font:inherit;white-space:nowrap">${label}</button>`).join("") +
         `</div><div id="disp-body"></div>` + rule +
-        `<button type="button" id="disp-reset" style="width:100%;border:1px solid #cbd5e1;` +
-        `background:#fff;padding:6px 8px;border-radius:6px;cursor:pointer;color:#334155;` +
-        `font:inherit">Restore defaults</button>`;
+        resetButton("disp-reset", "Restore defaults");
 
       const body = panel.querySelector("#disp-body");
 
@@ -179,7 +279,8 @@ export function displayControl() {
       }
 
       function renderTab() {
-        body.innerHTML = activeTab === "areas" ? areasTab() : flashTab();
+        body.innerHTML =
+          activeTab === "areas" ? areasTab() : activeTab === "flash" ? flashTab() : mapTab();
         paintTabs();
         bindBody();
         if (activeTab === "areas") highlightDataset();
@@ -194,31 +295,51 @@ export function displayControl() {
           const key = sel.dataset.key;
           if (key === ALL_MODELS) for (const m of PANEL_MODELS) modelRamp[m] = sel.value;
           else if (key === "flash") view.flashRampId = sel.value;
+          else if (key === "concur") view.concurRampId = sel.value;
           else modelRamp[key] = sel.value;
+          // Once two models are on different ramps, a cell holding both has no
+          // single right color — so the moment they stop matching, concurrence
+          // takes a color of its own and the question stops arising. Switched on
+          // automatically, never off: putting the ramps back in step leaves it
+          // alone, because by then it may be what the viewer actually wants.
+          if (!sharedRamp(PANEL_MODELS)) view.concurHeat = true;
           renderTab();                    // the sample beside the picker follows
           actions.onDisplayChange();      // the map and the panel's legends
         }));
 
-        // --- areas tab ---
-        const above = $("#disp-flash-above");
-        if (above) above.addEventListener("change", (e) => {
-          view.flashAboveCells = e.target.checked;
-          applyLayerOrder();            // restack; nothing repaints or refetches
+        const rampsToggle = $("#disp-ramps-toggle");
+        if (rampsToggle) rampsToggle.addEventListener("click", () => {
+          rampsOpen = !rampsOpen;
+          renderTab();                    // markup only; nothing on the map moves
         });
 
-        const hatch = $("#disp-hatch");
-        if (hatch) hatch.addEventListener("change", (e) => {
-          view.hatchOn = e.target.checked;
+        const heatCb = $("#disp-heat");
+        if (heatCb) heatCb.addEventListener("change", (e) => {
+          view.heatOn = e.target.checked;
+          // The menu itself changes: the two views own different controls.
+          renderTab();
+          applyHeatStyle();
+          // And the cells' own paint, which goes to zero under the surface and
+          // takes the heat's ramp for whatever is still drawn.
+          applyFillStyle();
+          actions.onDisplayChange();      // the join and the panel keys
+        });
+        bindPct($("#disp-heat-opacity"), "heatOpacity");
+        bindPct($("#disp-heat-radius"), "heatRadius", asMultiple);
+
+        const cellTip = $("#disp-cell-tip");
+        if (cellTip) cellTip.addEventListener("change", (e) => {
+          // Nothing to repaint or rebuild: the hover handler reads this live on the
+          // next mouse move, and the map has no pointer on it while this menu is open.
+          view.cellTooltip = e.target.checked;
+        });
+
+        const concurHeat = $("#disp-concur-heat");
+        if (concurHeat) concurHeat.addEventListener("change", (e) => {
+          view.concurHeat = e.target.checked;
+          // Reveals or hides its ramp picker, and repartitions both point sets.
+          renderTab();
           actions.onDisplayChange();
-        });
-
-        SEV_KEYS.forEach((k) => {
-          const cb = $("#disp-sev-" + k);
-          if (!cb) return;
-          cb.addEventListener("change", (e) => {
-            if (e.target.checked) visibleSeverities.add(k); else visibleSeverities.delete(k);
-            actions.onDisplayChange();
-          });
         });
 
         SEV_KEYS.forEach((k) => {
@@ -236,17 +357,30 @@ export function displayControl() {
 
         // --- flash tab ---
         FLASH_TIERS.forEach((t) => {
-          const cb = $("#disp-tier-" + t);
-          if (!cb) return;
-          cb.addEventListener("change", (e) => {
-            if (e.target.checked) visibleTiers.add(t); else visibleTiers.delete(t);
+          const range = $("#disp-flw-" + t);
+          if (!range) return;
+          const readout = body.querySelector("#disp-flw-" + t + "-val");
+          range.addEventListener("input", () => {
+            view.flashLineWidth[t] = Number(range.value);
+            if (readout) readout.textContent = Number(range.value).toFixed(1);
             applyFlashStyle();
-            actions.onDisplayChange();    // the flash legend follows the tiers
           });
         });
 
         bindFill($("#disp-flash-opacity"), $("#disp-flash-outline"),
           "flashOpacity", "flashOutlineOnly", applyFlashStyle);
+      }
+
+      // A percentage range bound straight onto one `view` key. Paint only — the
+      // surface's geometry never changes, so none of these rebuild anything.
+      function bindPct(range, key, fmt = asPercent) {
+        if (!range) return;
+        const readout = body.querySelector("#" + range.id + "-val");
+        range.addEventListener("input", () => {
+          view[key] = Number(range.value) / 100;
+          if (readout) readout.textContent = fmt(Number(range.value));
+          applyHeatStyle();
+        });
       }
 
       // Slider + outline-only pair, shared by both tabs: both are pure paint
@@ -274,11 +408,16 @@ export function displayControl() {
       }));
 
       // Reset covers both tabs at once, so it needs all three update paths: the
-      // opacity/outline pair are pure paint, the ramps, hatch and severity filter
-      // need the feature rebuild, and renderTab redraws the controls themselves so
-      // the sliders and checkboxes show the values that were just restored.
+      // opacity/outline pair are pure paint, the ramps need the feature rebuild,
+      // and renderTab redraws the controls themselves so the sliders and checkboxes
+      // show the values that were just restored. It reaches no filter: those have
+      // their own reset, in their own menu.
       panel.querySelector("#disp-reset").addEventListener("click", () => {
         restoreDisplayDefaults();
+        // The ramp disclosure is menu state, not a `view` setting, so the restore
+        // cannot reach it — and a tab that came back on its defaults with a block
+        // still hanging open has not quite been restored.
+        rampsOpen = false;
         renderTab();
         applyFillStyle();
         applyFlashStyle();

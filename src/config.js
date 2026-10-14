@@ -1,8 +1,7 @@
-// Constants: severity ordering, colour ramps, model and dataset wording, and every
+// Constants: severity ordering, color ramps, model and dataset wording, and every
 // MapLibre source/layer id. Pure data — no state, no map, no DOM.
-import {DATA} from "./sources.js";
 
-// Severity is the ordering (and the wording); the colour comes from whichever
+// Severity is the ordering (and the wording); the color comes from whichever
 // ramp the model is currently assigned in the Display menu.
 export const SEVERITY = {
   warning: {rank: 1, label: "Warning"},
@@ -11,10 +10,8 @@ export const SEVERITY = {
 };
 export const SEV_KEYS = Object.keys(SEVERITY);
 export const DEFAULT_COLOR = "#4da3ff";
-export const HASH_COLOR = "#0f172a";   // neutral dark for the multi-model legend swatch
-                                // (on the map the hash/outline are per-severity)
 
-// ---- Colour ramps ---------------------------------------------------------
+// ---- Color ramps ---------------------------------------------------------
 // One ramp = three shades, light (warning) to dark (extreme). A ramp is picked
 // per model, so GEOGLOWS and Flood Hub can be told apart at a glance; the flash
 // overlay takes its two tiers from the MIDDLE and dark ends of its own ramp —
@@ -25,22 +22,25 @@ export const HASH_COLOR = "#0f172a";   // neutral dark for the multi-model legen
 // (backend/common/config.py PALETTES -> palettes.csv) and settings.setPalettes
 // swaps it in; these exist so the Display menu and the panel legends are never
 // empty during that first moment. Keep the two lists in step — a ramp missing
-// here flashes a wrong colour for the moment before the release arrives.
+// here flashes a wrong color for the moment before the release arrives.
 //
 // All ten run the same way: darker is worse. The matplotlib maps are sampled
-// downwards (0.75 / 0.45 / 0.15) to get there, since they brighten as their
-// value rises; the ColorBrewer 3-class schemes are taken whole and already do.
+// downwards (0.75 / 0.45 / 0.15) to get there, since they brighten as their value
+// rises; the ColorBrewer ones are sampled from the nine-class sequences at 2 / 4 / 6
+// and already do. Those used to be the published 3-class schemes, whose lightest
+// swatch measured 2.1 to 4.0 dE from the bare basemap at 30% fill — at or under the
+// threshold where a color is visible at all. See backend/common/config.py.
 export const RAMPS = [
   {id: "viridis", label: "Viridis", warning: "#5ec962", danger: "#25848e", extreme: "#463480"},
   {id: "plasma", label: "Plasma", warning: "#f89540", danger: "#bf3984", extreme: "#5601a4"},
   {id: "inferno", label: "Inferno", warning: "#f98e09", danger: "#a82e5f", extreme: "#2b0b57"},
   {id: "magma", label: "Magma", warning: "#fc8961", danger: "#a1307e", extreme: "#251255"},
   {id: "cividis", label: "Cividis", warning: "#bcae6c", danger: "#727274", extreme: "#243c6e"},
-  {id: "blues", label: "Blues", warning: "#deebf7", danger: "#9ecae1", extreme: "#3182bd"},
-  {id: "greens", label: "Greens", warning: "#e5f5e0", danger: "#a1d99b", extreme: "#31a354"},
-  {id: "oranges", label: "Oranges", warning: "#fee6ce", danger: "#fdae6b", extreme: "#e6550d"},
-  {id: "purples", label: "Purples", warning: "#efedf5", danger: "#bcbddc", extreme: "#756bb1"},
-  {id: "reds", label: "Reds", warning: "#fee0d2", danger: "#fc9272", extreme: "#de2d26"},
+  {id: "blues", label: "Blues", warning: "#c6dbef", danger: "#6baed6", extreme: "#2171b5"},
+  {id: "greens", label: "Greens", warning: "#c7e9c0", danger: "#74c476", extreme: "#238b45"},
+  {id: "oranges", label: "Oranges", warning: "#fdd0a2", danger: "#fd8d3c", extreme: "#d94801"},
+  {id: "purples", label: "Purples", warning: "#dadaeb", danger: "#9e9ac8", extreme: "#6a51a3"},
+  {id: "reds", label: "Reds", warning: "#fcbba1", danger: "#fb6a4a", extreme: "#cb181d"},
 ];
 
 
@@ -110,12 +110,6 @@ export const DATASETS = {
   },
 };
 
-// ---- Dataset switcher + basin-context state (logic further down) -----------
-// Data URLs come from the source hub in sources.js (see DATA import above).
-export const DATASETS_MENU = [
-  {key: "h3", label: "H3 cells", url: DATA.h3},
-  {key: "basins", label: "Basins", url: DATA.basins},
-];
 export const FLASH_SRC = "flash-src";
 // Fill is split by type so highly_likely can stack above likely. The fills
 // double as hover/click hit targets; FLASH_LAYERS is bottom->top within the group.
@@ -125,23 +119,74 @@ export const FLASH_LAYERS = ["flash-fill-likely", "flash-line-likely", "flash-fi
 // Flash-flood models listed in the panel's "Flash Floods" dropdown. Only Flood
 // Hub exists today; adding a model here (with its own layer/toggle wiring)
 // extends the list. `legend` describes the polygon types the model draws, and
-// matches the on-map styling (fill + outline, dashed for the lower tier).
+// matches the on-map styling (fill + outline).
 export const FLASH_MODELS = [
   {key: "flood_hub", label: "Flood Hub", tiers: ["likely", "highly_likely"]},
 ];
 // The two flash tiers, lightest first. Each takes one end of the flash ramp, so
-// recolouring the overlay from the Display menu moves the map, the legend and
+// recoloring the overlay from the Display menu moves the map, the legend and
 // the hover tooltip together. `sev` names the ramp stop, not a river severity.
 export const FLASH_TIERS = ["likely", "highly_likely"];
-// `fillMul` and `selMul` keep the two tiers in their established proportions off
-// the single opacity slider: at the default 0.5 they reproduce exactly the fixed
-// opacities the overlay shipped with (0.32/0.55 and 0.50/0.72).
+// `fillMul` keeps the two tiers in their established proportions off the single
+// opacity slider. How a HOVERED or SELECTED polygon differs from a resting one is
+// not here — that is EMPHASIS below, shared with the cells, because a map where two
+// layers answer the pointer differently reads as two maps.
+// `lineWidth` is the STARTING outline weight only — the viewer owns it from there
+// (Display Options -> Flash Floods), the same way the river severities work. Both
+// tiers draw a solid line now: the lower one used to be dashed, which at the sizes
+// these polygons are drawn read as texture rather than as a distinction, and the
+// two are already told apart by fill and color.
 export const FLASH_TIER = {
-  likely: {label: "Likely", sev: "danger", dashed: true,
-    fillMul: 0.64, selMul: 1.72, lineWidth: 1.1, selWidth: 3},
-  highly_likely: {label: "Highly likely", sev: "extreme", dashed: false,
-    fillMul: 1, selMul: 1.44, lineWidth: 1.8, selWidth: 3.5},
+  likely: {label: "Likely", sev: "danger",
+    fillMul: 0.64, lineWidth: 1.1, lineOpacity: 0.9},
+  highly_likely: {label: "Highly likely", sev: "extreme",
+    fillMul: 1, lineWidth: 1.8, lineOpacity: 0.95},
 };
+
+// What hover and selection do to a shape, for every layer that answers the pointer.
+//
+// The flagged cells and the flash polygons used to disagree: a cell lifted its fill
+// on hover and dropped it when picked, a polygon had no hover at all and simply got
+// darker when picked. Two layers under one cursor behaving differently reads as two
+// maps, so both now take their emphasis from here.
+//
+// Selection LIGHTENS the fill — a plain multiplier, which cannot saturate — so the
+// white outline and whatever is underneath both read. Hover works the other way,
+// and the rule it follows is the one thing here worth reading twice.
+//
+// Hover used to be a multiplier too (x2), and that broke on the one shape it most
+// needed to work on. A "highly likely" flash polygon rests at the full opacity
+// slider value, 0.5, so hovering took it to 1.0: opaque, and opaque over the heat
+// map means the pointer erases what you moved it there to look at. Doubling is
+// fine at 0.3 and meaningless at 0.5.
+//
+// So hover moves the fill a fixed fraction of the way to a TRANSLUCENCY CEILING
+// rather than scaling it. Nothing can reach opaque, the jump stays proportionate
+// at any slider setting, and the shapes that were already working barely move:
+// a cell at 0.3 goes to 0.575 where it used to go to 0.6, while a highly-likely
+// polygon at 0.5 now goes to 0.665 instead of disappearing into itself. Above the
+// ceiling the same line LIGHTENS on hover, which is the only signal left once a
+// shape is already opaque, and is what you want anyway — it reveals the surface
+// underneath instead of sealing it.
+//
+// The widths are in px, and are floors rather than fixed values: a resting outline
+// set heavier than these would otherwise make a picked shape look thinner than an
+// unpicked one.
+export const EMPHASIS = {
+  hoverLift: 0.55,        // fraction of the gap to the ceiling that hover closes
+  fillCeiling: 0.8,       // hover never lands past this, so every fill stays see-through
+  selectedFill: 0.7,
+  hoverLine: 3,
+  selectedLine: 4,
+  lineOpacity: 1,
+};
+
+/** A resting fill opacity as it should be drawn under the cursor. */
+export const hoverFill = (base) =>
+  Math.min(1, base + (EMPHASIS.fillCeiling - base) * EMPHASIS.hoverLift);
+
+/** ...and as it should be drawn once picked. */
+export const selectedFill = (base) => Math.min(1, base * EMPHASIS.selectedFill);
 // tier -> its fill and line layer ids
 export const FLASH_TIER_LAYERS = {
   likely: ["flash-fill-likely", "flash-line-likely"],
@@ -176,7 +221,6 @@ export const LINK_ZOOM = {geoglows: 13, flood_hub: 10};
 export const SRC = "cells";
 export const FILL = "cells-fill";
 export const LINE = "cells-line";
-export const HASH = "cells-hash";   // hash-pattern overlay marking multi-model basins
 export const EMPTY_FC = {type: "FeatureCollection", features: []};
 
 export const stateOn = (key) => ["boolean", ["feature-state", key], false];
@@ -216,22 +260,12 @@ export const STREAM_ZOOM_SCALE = [[3, 0.25], [7, 0.5], [12, 1], [16, 2.2]];
 // The network's own fade at low zoom, so it sits back behind the flagged cells.
 export const STREAM_OPACITY = [[3, 0.65], [9, 0.95]];
 
-// Administrative boundaries: one tile archive holding all three levels as named
-// layers, each a hit-target fill under a thin outline. The zoom each level takes
-// over at is the same table backend/common/config.py tiles to, so the bands the
-// archive was cut for and the bands it is drawn at cannot drift apart.
-export const BOUNDARIES_SRC = "boundaries-src";
-export const ADM_TILES_URL = "pmtiles:///backend/static/tiles/adm.pmtiles";
-export const ADM_LEVELS = [0, 1, 2];
-export const ADM_ZOOM = {0: 0, 1: 4, 2: 7};
-export const ADM_LABEL = ["Country", "Region", "District"];
-export const ADM_SOURCE_LAYER = (level) => `adm${level}`;
-export const ADM_FILL = (level) => `boundaries-fill-${level}`;
-export const ADM_LINE = (level) => `boundaries-line-${level}`;
-export const BOUNDARY_COLOR = "#475569";
-// geoBoundaries is CC BY 4.0, so this credit is a licence condition, not a courtesy.
-export const ADM_ATTRIBUTION =
-  'Boundaries: <a href="https://www.geoboundaries.org">geoBoundaries CGAZ</a> (CC BY 4.0)';
+// Administrative boundaries were drawn here as their own context layer, from
+// backend/static/tiles/adm.pmtiles. Removed: every base map already carries
+// national and regional borders, so a second set of outlines over them was two
+// lines saying one thing. The geoBoundaries files themselves stay — the backend
+// still uses them for each forecast's "Near" district (backend/common/admin.py),
+// which is a label, not a layer. The retired layer is in Other/retired/.
 
 // Top to bottom, in named groups so the stack can be rearranged at runtime
 // rather than being one frozen list. The global backdrops sit at the bottom —
@@ -243,21 +277,63 @@ export const ADM_ATTRIBUTION =
 // whatever the release declares, so they are collected from the map by name at
 // the moment the order is applied. A static list went stale the moment the cells
 // moved into vector tiles, and silently stopped ordering them at all.
+// ---- Heat map --------------------------------------------------------------
+// A continuous surface built from the flagged cells' own centres, weighted by
+// severity. It stands in front of the per-model coloring rather than beside it:
+// while it is on, the hexagons drop to zero opacity and stay on the map purely as
+// hit targets, EXCEPT where models concur — those are drawn as real hexagons and
+// left out of the surface, so agreement reads as a hard edge in a blurred field.
+// Concurrence gets its own surface, in its own hue. The two are a PARTITION, not
+// an overlay: a cell feeds one or the other, never both, so the green is not also
+// making the orange underneath it hotter. Same weights, same blur, same radius —
+// only the ramp differs, so the hue is carrying the one fact the severity channel
+// cannot (how many models are saying it) without touching what the brightness
+// means (how bad they say it is).
+export const HEAT_CONCUR_SRC = "heat-concur-src";
+export const HEAT_CONCUR_LAYER = "heat-concur";
+
+// ...and one per model beside it. The surface used to be a single severity field
+// with one ramp, which meant the heat map was the one view where the models could
+// not be told apart at all. Each now gets its own layer in its own ramp, and every
+// cell lands in exactly ONE of them — at the base resolution a cell with two models
+// IS a concurrence cell, so "which model owns this cell" is a question with one
+// answer whenever concurrence is not being drawn apart.
+export const HEAT_MODEL_SRC = (m) => `heat-src-${m}`;
+export const HEAT_MODEL_LAYER = (m) => `heat-${m}`;
+
+// How steeply the three rungs separate. A rung's weight is (rank / 3) ^ exponent,
+// so the curve is one number rather than three hand-set values that drift out of
+// proportion with each other.
+//
+// At 1 (linear: .33 / .67 / 1.00) warnings take 49% of the surface's total weight
+// off 69% of the cells, and the map mostly shows where cells are dense rather than
+// where it is bad. At 2 (.11 / .44 / 1.00) the three rungs contribute 28 / 34 / 38
+// percent, which is the point at which a rung's share stops tracking how many
+// cells it has. Raise it to 3 to push the warnings down further.
+export const HEAT_SEVERITY_EXPONENT = 2;
+
+export const heatWeight = (sev) => {
+  const info = SEVERITY[(sev || "").toLowerCase()];
+  if (!info) return 0;
+  return (info.rank / SEV_KEYS.length) ** HEAT_SEVERITY_EXPONENT;
+};
+
 export const LAYER_GROUPS = {
   contextTop: [
     "ctx-streams-line", "ctx-streams-casing",
     "ctx-districts-line", "ctx-districts-casing", "ctx-districts-fill",
   ],
   flash: ["flash-line-high", "flash-fill-high", "flash-line-likely", "flash-fill-likely"],
-  backdrop: [
-    ...[...ADM_LEVELS].sort((a, b) => b - a).flatMap((l) => [ADM_LINE(l), ADM_FILL(l)]),
-    ...STREAMS_LAYERS,
-  ],
+  // Concurrence above the models — within a group, earlier draws on top. The model
+  // surfaces are disjoint so their order between themselves does not matter; it is
+  // fixed to PANEL_MODELS anyway so a restack is never a reshuffle.
+  heat: [HEAT_CONCUR_LAYER, ...PANEL_MODELS.map(HEAT_MODEL_LAYER)],
+  backdrop: [...STREAMS_LAYERS],
 };
-// Within one resolution: outline on top, then the hatch, the split bands, and the
+// Within one resolution: outline on top, then the split bands, and the
 // tile fill at the bottom — the order they are created in, stated so it survives
 // a re-sort.
-export const CELL_LAYER_KINDS = ["cells-line", "cells-hash", "cells-split", "cells-fill"];
+export const CELL_LAYER_KINDS = ["cells-line", "cells-split", "cells-fill"];
 
 // ---- Basin context: streams + districts (MapLibre sources/layers) ---------
 

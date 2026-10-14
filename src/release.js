@@ -12,7 +12,7 @@
 //   forecasts.csv       one row per forecast: the panel's attribute rows
 //   cell_forecasts.csv  which forecasts are in which cell, at every resolution
 //   layers.csv          per resolution: which tile archive, and its zoom band
-//   palettes.csv        per (palette, severity): the colour
+//   palettes.csv        per (palette, severity): the color
 //   models.csv          per model: its label and default palette
 //
 // The style tables are assembled here into the shape the map layer wants — source
@@ -202,7 +202,7 @@ function buildRules(style, cells) {
   }
 
   // palettes.csv is one row per (palette, severity); the map wants one object per
-  // palette with a colour per rung.
+  // palette with a color per rung.
   const palettes = [];
   const byId = new Map();
   for (const row of style.palettes || []) {

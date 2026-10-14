@@ -11,6 +11,7 @@ import chevronDown from "heroicons/24/outline/chevron-down.svg?raw";
 import clock from "heroicons/24/outline/clock.svg?raw";
 import exclamationTriangle from "heroicons/24/outline/exclamation-triangle.svg?raw";
 import funnel from "heroicons/24/outline/funnel.svg?raw";
+import handRaised from "heroicons/24/outline/hand-raised.svg?raw";
 import magnifyingGlass from "heroicons/24/outline/magnifying-glass.svg?raw";
 import users from "heroicons/24/outline/users.svg?raw";
 
@@ -23,6 +24,7 @@ import calciteAreaHashFilled from "@esri/calcite-ui-icons/icons/area-hash-filled
 import calciteCarTravelMode from "@esri/calcite-ui-icons/icons/car-travel-mode-16.svg?raw";
 import calciteTrainTravelMode from "@esri/calcite-ui-icons/icons/train-travel-mode-16.svg?raw";
 import calciteMonitor from "@esri/calcite-ui-icons/icons/monitor-16.svg?raw";
+import calciteCursor from "@esri/calcite-ui-icons/icons/cursor-16.svg?raw";
 
 const ICONS = {
   "arrow-top-right-on-square": arrowTopRightOnSquare,
@@ -33,6 +35,7 @@ const ICONS = {
   "clock": clock,
   "exclamation-triangle": exclamationTriangle,
   "funnel": funnel,
+  "hand-raised": handRaised,
   "magnifying-glass": magnifyingGlass,
   "users": users,
   // Esri Calcite icons
@@ -43,13 +46,14 @@ const ICONS = {
   "area-hash-filled":calciteAreaHashFilled,
   "car-travel-mode":calciteCarTravelMode,
   "train-travel-mode":calciteTrainTravelMode,
-  "monitor": calciteMonitor
+  "monitor": calciteMonitor,
+  "cursor": calciteCursor
 };
 
 // Filled icons whose paths carry no `fill` (so they'd default to black): inject
-// fill="currentColor" for these so they inherit the surrounding text colour. The
+// fill="currentColor" for these so they inherit the surrounding text color. The
 // stroke-based heroicons must NOT get it (it would fill their outlines solid).
-const FILL_ICONS = new Set(["basemap", "h3-hexagon", "hexagon-2", "layers","area-hash-filled","car-travel-mode","train-travel-mode","monitor"]);
+const FILL_ICONS = new Set(["basemap", "h3-hexagon", "hexagon-2", "layers","area-hash-filled","car-travel-mode","train-travel-mode","monitor","cursor"]);
 
 // Returns the icon as an HTML string, sized in `em` so the surrounding
 // font-size class still controls it and `currentColor` still inherits — the two

@@ -124,12 +124,47 @@ export function registerPointerSource(src) {
   pointerSources.push(src);
 }
 
+// ---- pointer mode -----------------------------------------------------------
+// Pan or select. Select is everything the map has always done, unchanged. Pan is
+// the same map with hover and click switched off, so dragging around cannot pick
+// something up by accident.
+//
+// Gated HERE, in the single dispatcher, and nowhere else. Every layer could have
+// been taught to check the mode, and then a mode would be a thing each of them has
+// to remember — which is a thing one of them eventually forgets. The sources are
+// untouched by this.
+const panning = () => view.pointerMode === "pan";
+
+function applyPointerCursor(dragging = false) {
+  // "" hands the cursor back to MapLibre's own stylesheet, which is what the
+  // select-mode hover rule below then overrides per frame.
+  map.getCanvas().style.cursor = panning() ? (dragging ? "grabbing" : "grab") : "";
+}
+
+/** Switch tools. The control calls this; nothing else should. */
+export function setPointerMode(mode) {
+  view.pointerMode = mode === "pan" ? "pan" : "select";
+  applyPointerCursor();
+  if (panning()) tooltip.remove();
+}
+
+map.on("dragstart", () => applyPointerCursor(true));
+map.on("dragend", () => applyPointerCursor(false));
+
 const liveFeatures = (src, point) => {
   const ids = src.layers().filter((id) => map.getLayer(id));
   return ids.length ? map.queryRenderedFeatures(point, {layers: ids}) : [];
 };
 
 map.on("mousemove", (e) => {
+  if (panning()) {
+    // Clear whatever the sources are holding, through the empty-list contract they
+    // already honour, so a highlight cannot be left stranded by the switch.
+    for (const src of orderedSources()) if (src.hover) src.hover([], e);
+    tooltip.remove();
+    applyPointerCursor();
+    return;
+  }
   const parts = [];
   let anyHit = false;
   for (const src of orderedSources()) {
@@ -148,6 +183,7 @@ map.on("mousemove", (e) => {
 });
 
 map.on("click", (e) => {
+  if (panning()) return;
   // The camera is the one thing two sources cannot share. Earlier sources claim
   // it first: a flagged cell is the smaller, more precisely aimed target, and
   // when it is coarse the move is a drill toward the resolution that can actually
@@ -210,11 +246,21 @@ function cellLayers() {
 
 // Top of the array draws on top.
 function layerOrder() {
-  const {contextTop, flash, backdrop} = LAYER_GROUPS;
+  const {contextTop, flash, heat, backdrop} = LAYER_GROUPS;
   const cells = cellLayers();
   return [
     ...contextTop,
-    ...(view.flashAboveCells ? [...flash, ...cells] : [...cells, ...flash]),
+    // Cells on top, then the heat surface, then flash. Fixed, not a setting: the
+    // flash polygons are much the larger shape — whole districts against a 36 km2
+    // hexagon — so above either rendering of the cells they bury what they overlap.
+    // Underneath, all three read, and the one being pointed at still lifts clear
+    // through its hover emphasis.
+    ...cells,
+    // Under the cells on purpose. In heat mode most of them are invisible, so
+    // nothing of theirs covers the surface — but the concurrence hexagons, and
+    // whichever cell is hovered or selected, have to draw OVER it.
+    ...heat,
+    ...flash,
     ...backdrop,
   ];
 }

@@ -1,8 +1,8 @@
 // Pure helpers: value formatting, human labels, deep links, severity ranking, and
-// the colour maths. Depends only on config.js, so it is safe to import anywhere.
+// the color maths. Depends only on config.js, so it is safe to import anywhere.
 import {FILL_PREFIX, FLASH_TIER, LINK_ZOOM, MODEL_LABELS, SEVERITY} from "./config.js";
 
-// The model whose forecast set the cell's worst severity — it owns the colour
+// The model whose forecast set the cell's worst severity — it owns the color
 // of an undivided cell. Ties go to the first model in PANEL_MODELS order.
 export function ownerModel(forecasts) {
   let best = null, bestRank = -1;
@@ -14,15 +14,24 @@ export function ownerModel(forecasts) {
   return best;
 }
 
-// A darker shade of a hex colour (multiply each channel).
+// A darker shade of a hex color (multiply each channel).
 export function darken(hex, f = 0.55) {
   const n = parseInt(hex.slice(1), 16);
   const c = (sh) => Math.round(((n >> sh) & 255) * f).toString(16).padStart(2, "0");
   return "#" + c(16) + c(8) + c(0);
 }
+// A hex color at a given alpha, as a CSS rgba() string. The heat ramp's first
+// stop has to be fully transparent — not white, which would lay a haze over the
+// basemap everywhere the surface is empty.
+export function rgba(hex, a) {
+  if (!hex || hex[0] !== "#" || hex.length < 7) return `rgba(0,0,0,${a})`;
+  const n = parseInt(hex.slice(1, 7), 16);
+  return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
 // Ink that stays readable on `hex`. Relative luminance per WCAG: channels are
 // linearised before weighting, because sRGB is gamma encoded and averaging the
-// raw bytes overrates dark colours badly — #2b0b57 (inferno's `extreme`) reads
+// raw bytes overrates dark colors badly — #2b0b57 (inferno's `extreme`) reads
 // as mid-grey on a naive average and as near-black here, which is the difference
 // between illegible dark text and white.
 //
@@ -156,6 +165,25 @@ export function modelLink(fc) {
 export function fillSource(fc) {
   const id = String((fc && fc.native_id) || "");
   return id.startsWith(FILL_PREFIX) ? id.slice(FILL_PREFIX.length).trim() || null : null;
+}
+
+// Whether this cell IS corroborated, given the models currently shown — two or
+// more agree on it, and at least one of them is on screen.
+//
+// `co_models` and not `models`: step 3 fills it only with the model sets that
+// genuinely share one BASE cell, where a coarse cell's `models` lists everything
+// beneath it and would claim agreement between models a hundred kilometres apart.
+//
+// `some`, not `every`. A stricter test asked whether the agreement was VISIBLE, and
+// it made the "Concurrence only" filter unsatisfiable the moment you narrowed to one
+// model: every co_models set has two or more members, so `every` could never pass
+// and the map went silently empty. Measured on one release, filtering to Flood Hub
+// alone: 0 cells under `every`, 611 under `some`. Being corroborated does not stop
+// being true because the corroborating model is hidden.
+//
+export function corroborated(cell, models) {
+  return (cell.co_models || []).some(
+    (set) => set.length >= 2 && set.some((m) => models.has(m)));
 }
 
 export function worstSeverity(forecasts) {

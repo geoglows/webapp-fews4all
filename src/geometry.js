@@ -3,7 +3,7 @@
 import {LngLatBounds} from "maplibre-gl";
 
 // ---- Splitting a cell between the models that forecast in it --------------
-// With a ramp per model, a cell holding both models has no single right colour,
+// With a ramp per model, a cell holding both models has no single right color,
 // so it is drawn as one vertical slice per model, each in its own ramp. The
 // slices carry the fill; the undivided original stays in the collection to draw
 // the outline and hash, so the split never shows up as a seam in the border.

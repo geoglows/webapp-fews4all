@@ -37,7 +37,7 @@ across in either direction.
 ```
 main.js        wiring + boot, and nothing else
 config.js      constants: severity, ramps, wording, every source/layer id
-settings.js    live view state (`view`) + the colours derived from it
+settings.js    live view state (`view`) + the colors derived from it
 format.js      pure formatting, labels, deep links, severity ranking
 geometry.js    bounds + the clipping that splits a cell between models
 basemaps.js    base-map definitions and thumbnails
@@ -65,7 +65,7 @@ stays visible.
 **Cells & Basins**
 
 - **Flagged area** — H3 cells or basins.
-- **Appearance** — a colour ramp per model (three shades, light warning to dark
+- **Appearance** — a color ramp per model (three shades, light warning to dark
   extreme), fill opacity, and an outline-only mode for dense areas or imagery. A cell
   holding forecasts from two models is drawn as one vertical slice per model, each in
   its own ramp; the outline and hash stay undivided so the split never reads as a
@@ -85,7 +85,7 @@ Display Options governs how things look, the panel's filters govern what is show
 
 Each model tile in the side panel carries its own legend, directly under the model
 name and present whether or not the tile holds a forecast — a model's key shows the
-colours that model paints, which is what a ramp per model is for. The tiles list only
+colors that model paints, which is what a ramp per model is for. The tiles list only
 the severities (or flash tiers) actually being drawn. "Models concur" appears in both
 model tiles — it describes the pair, so a reader looking at one tile shouldn't have to
 find the other to learn what the hash means — and disappears when the hatch highlight
@@ -98,7 +98,7 @@ that sit alongside the hazard rather than describing it:
 
 - **Global → TDX-Hydro Streams** — the network GEOGLOWS forecasts on, telescoping by
   zoom: order 7 and up at world view, order 6 from zoom 3, everything from zoom 5. Drawn beneath
-  the flagged cells so it reads as a backdrop. Colour, width ramp and opacity are taken
+  the flagged cells so it reads as a backdrop. Color, width ramp and opacity are taken
   from River Forecast System v3's own `streams.js` (`STREAM_*` in `config.js`): width
   runs 4px to 10px across Strahler order 2-10, scaled x0.25/x0.5/x1/x2.2 at zoom
   3/7/12/16, so an order-6 reach is drawn at the same weight in both apps. The opening
@@ -204,5 +204,5 @@ app reads either one from the Flagged area control.
 Four tiers — none / warning / danger / extreme. Flood Hub uses its own labels; GEOGLOWS is derived from return period (>=20yr extreme, >=5yr danger, >=2yr warning). Thresholds and the mean-flow floor
 are set at the top of each build script (`build_cells_h3.py`, `build_basins.py`).
 
-Colour is *not* fixed to severity: severity picks the shade, and the model's ramp
+Color is *not* fixed to severity: severity picks the shade, and the model's ramp
 (chosen in the Display menu) picks the hue.

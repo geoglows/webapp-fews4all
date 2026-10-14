@@ -1,15 +1,15 @@
 // The Flood Hub flash-flood overlay (public/data_flash_floods.geojson): a global
 // layer, independent of the flagged-area dataset.
 import {DATA} from "../sources.js";
-import {FLASH_FILL_LAYERS, FLASH_LAYERS, FLASH_SRC, FLASH_TIER, FLASH_TIERS, FLASH_TIER_LAYERS, stateOn} from "../config.js";
-import {applyLayerOrder, map, registerPointerSource, registerTooltipLayers, tooltip} from "../map.js";
+import {EMPHASIS, FLASH_FILL_LAYERS, FLASH_LAYERS, FLASH_SRC, FLASH_TIER, FLASH_TIERS, FLASH_TIER_LAYERS, hoverFill, selectedFill, stateOn} from "../config.js";
+import {applyLayerOrder, map, registerPointerSource, registerTooltipLayers} from "../map.js";
 import {boundsNear, boundsOf} from "../geometry.js";
 import {flashChanceLabel} from "../format.js";
 import {flashFill, flashOutline, view, visibleFlashModels, visibleTiers} from "../settings.js";
 import {rerenderPanel, setFlashProps} from "../panel.js";
 
 // Flood Hub flash-flood polygons — a global overlay (available in every dataset
-// view) toggled from the "Flash Floods" section at the bottom of the side panel.
+// view), switched on under Filters -> Flash floods.
 // Two polygon types: "highly_likely" and "likely".
 let flashOn = false;
 let flashData = null;
@@ -20,6 +20,10 @@ let flashLoading = false;
 // tracked separately to carry the `selected` feature-state on the map.
 let selectedFlash = null;
 let selectedFlashId = null;
+// The polygon under the cursor. Carried as feature-state so the paint can answer
+// it, which is how the cells have always done hover — the flash overlay used to
+// have no hover state at all and only ever changed on selection.
+let hoveredFlashId = null;
 
 // ---- Flood Hub flash-flood polygons (global overlay) ----------------------
 
@@ -34,8 +38,8 @@ function loadFlash(cb) {
 }
 
 // Violet, distinct from severity (yellow/orange/red), streams (cyan) and districts
-// (magenta). "highly_likely" = darker fill + solid outline; "likely" = lighter fill
-// + dashed outline.
+// (magenta). "highly_likely" = darker fill, "likely" = lighter; both solid-outlined
+// at whatever weight Display Options has them set to.
 function ensureFlashLayers() {
   if (map.getSource(FLASH_SRC) || !flashData) return;
   // promoteId makes each polygon's `polygonId` its feature id, so a clicked
@@ -52,8 +56,8 @@ function ensureFlashLayers() {
     filter: ["==", ["get", "polygon_type"], "likely"],
     paint: {
       "line-color": ["case", stateOn("selected"), "#ffffff", flashOutline("likely")],
-      "line-width": ["case", stateOn("selected"), 3, 1.1],
-      "line-opacity": 0.9, "line-dasharray": [2, 1.5],
+      "line-width": flashLineWidthExpr("likely"),
+      "line-opacity": flashLineOpacityExpr("likely"),
     },
   });
   map.addLayer({
@@ -66,8 +70,8 @@ function ensureFlashLayers() {
     filter: ["==", ["get", "polygon_type"], "highly_likely"],
     paint: {
       "line-color": ["case", stateOn("selected"), "#ffffff", flashOutline("highly_likely")],
-      "line-width": ["case", stateOn("selected"), 3.5, 1.8],
-      "line-opacity": 0.95,
+      "line-width": flashLineWidthExpr("highly_likely"),
+      "line-opacity": flashLineOpacityExpr("highly_likely"),
     },
   });
   bindFlashInteractions();
@@ -76,13 +80,41 @@ function ensureFlashLayers() {
 // Repaint the flash overlay after its ramp changes (the layers may not exist
 // yet if the overlay has never been switched on — they pick the ramp up when
 // they are created).
-// A tier's resting/selected fill opacity, from the Display Options slider. Outline
-// mode drops the fill and leans on the (already distinct) dashed/solid borders.
+// A tier's outline weight, from its Display Options slider, emphasised the way the
+// cells are (config.js EMPHASIS).
+//
+// Those weights are floors, not fixed values: at a resting weight of 4 a selected
+// polygon drawn at EMPHASIS.selectedLine would be THINNER than an unselected one,
+// which reads as the selection having been lost.
+function flashLineWidthExpr(tier) {
+  const w = Number(view.flashLineWidth?.[tier] ?? FLASH_TIER[tier].lineWidth);
+  return ["case",
+    stateOn("selected"), Math.max(EMPHASIS.selectedLine, w + 1.5),
+    stateOn("hover"), Math.max(EMPHASIS.hoverLine, w + 1),
+    w];
+}
+
+// Full strength under the pointer, the tier's own weight at rest.
+function flashLineOpacityExpr(tier) {
+  return ["case",
+    stateOn("selected"), EMPHASIS.lineOpacity,
+    stateOn("hover"), EMPHASIS.lineOpacity,
+    FLASH_TIER[tier].lineOpacity];
+}
+
+// A tier's resting fill opacity, from the Display Options slider, plus what the
+// pointer does to it. Outline mode leans on the borders instead, which is why their
+// weights are adjustable.
 function flashOpacityExpr(tier) {
-  if (view.flashOutlineOnly) return 0;
-  const t = FLASH_TIER[tier];
-  const fill = Math.min(1, view.flashOpacity * t.fillMul);
-  return ["case", stateOn("selected"), Math.min(1, fill * t.selMul), fill];
+  // Outline-only drops the RESTING fill and nothing else: a hovered or selected
+  // polygon still lifts, exactly as a cell does. See fillOpacityExpr in
+  // layers/cells_tiles.js — the two layers answer the pointer the same way or the
+  // map reads as two maps.
+  const fill = Math.min(1, view.flashOpacity * FLASH_TIER[tier].fillMul);
+  return ["case",
+    stateOn("selected"), selectedFill(fill),
+    stateOn("hover"), hoverFill(fill),
+    view.flashOutlineOnly ? 0 : fill];
 }
 
 // Opacity, outline mode and which tiers are drawn. Kept apart from
@@ -91,6 +123,12 @@ export function applyFlashStyle() {
   for (const tier of FLASH_TIERS) {
     const [fillId, lineId] = FLASH_TIER_LAYERS[tier];
     if (map.getLayer(fillId)) map.setPaintProperty(fillId, "fill-opacity", flashOpacityExpr(tier));
+    // Re-applied here too, or the sliders would only take effect the first time the
+    // layers happened to be created.
+    if (map.getLayer(lineId)) {
+      map.setPaintProperty(lineId, "line-width", flashLineWidthExpr(tier));
+      map.setPaintProperty(lineId, "line-opacity", flashLineOpacityExpr(tier));
+    }
     // A hidden tier stays hidden even while the overlay is on; when the overlay
     // is off, setFlashOn has already hidden everything and owns the visibility.
     if (!flashOn) continue;
@@ -137,7 +175,13 @@ function bindFlashInteractions() {
   registerPointerSource({
     key: "flash",
     layers: () => FLASH_FILL_LAYERS,
-    hover: (hits) => (hits[0] ? flashTooltipHtml(hits[0].properties) : ""),
+    hover: (hits) => {
+      // Called with an empty list when nothing is under the cursor, which is what
+      // clears the previous polygon — the same contract the cells rely on.
+      const hit = hits[0];
+      setFlashHover(hit ? hit.properties.polygonId : null);
+      return hit ? flashTooltipHtml(hit.properties) : "";
+    },
     click(hits, _e, ctx) {
       const hit = hits[0];
       // Off a polygon: drop the selection rather than leaving the tile showing a
@@ -173,6 +217,19 @@ function bindFlashInteractions() {
   });
 }
 
+// Carry the `hover` feature-state on the polygon under the cursor, clearing it
+// from the last one. Pass null to clear. Guards on sameness because this runs on
+// every mousemove.
+function setFlashHover(polygonId) {
+  if (hoveredFlashId === polygonId) return;
+  if (!map.getSource(FLASH_SRC)) { hoveredFlashId = polygonId; return; }
+  if (hoveredFlashId != null)
+    map.setFeatureState({source: FLASH_SRC, id: hoveredFlashId}, {hover: false});
+  hoveredFlashId = polygonId;
+  if (polygonId != null)
+    map.setFeatureState({source: FLASH_SRC, id: polygonId}, {hover: true});
+}
+
 // Carry the `selected` feature-state on the clicked flash polygon (white
 // outline), clearing it from the previously selected one. Pass null to clear.
 export function setFlashSelected(polygonId) {
@@ -185,7 +242,7 @@ export function setFlashSelected(polygonId) {
 }
 
 // Back to standby: clicking the basemap closes the flash tile as well as the cell
-// tile, and layers/cells.js cannot assign this module's state from outside.
+// tile, and the cell layer cannot assign this module's state from outside.
 export function clearFlashSelection() {
   selectedFlash = null;
   setFlashSelected(null);
@@ -201,6 +258,8 @@ export function flashUnderCursor(point) {
 export function setFlashOn(on) {
   flashOn = on;
   if (!on) {
+    // Or a polygon hidden mid-hover comes back lit when the overlay returns.
+    setFlashHover(null);
     FLASH_LAYERS.forEach((id) => { if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none"); });
     return;
   }
@@ -216,7 +275,7 @@ export function setFlashOn(on) {
     }
     ensureFlashLayers();
     FLASH_LAYERS.forEach((id) => { if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "visible"); });
-    applyFlashStyle();   // re-hide any tier switched off in Display Options
+    applyFlashStyle();   // re-hide any tier switched off under Filters
     applyLayerOrder();   // keep flash below districts and above basins
   });
 }

@@ -5,9 +5,9 @@
 //
 //   Geometry is not ours. The archives hold every cell in the world's land
 //   drainage and carry one property, h3_id. What a release does is say which of
-//   them to show and what colour they are, and that arrives as tables.
+//   them to show and what color they are, and that arrives as tables.
 //
-//   Visibility is a filter, colour is a join. MapLibre cannot filter on
+//   Visibility is a filter, color is a join. MapLibre cannot filter on
 //   feature-state, so the two are separate mechanisms: an explicit id list from
 //   map_rules.json decides what is drawn, and setFeatureState carries severity
 //   onto the features so the paint expression can read it. State is stored per
@@ -26,11 +26,11 @@
 //   its own zoom band, so there is no zoomend handler swapping data — the map
 //   simply stops requesting one archive and starts requesting the next.
 import {cellToBoundary, cellToLatLng} from "h3-js";
-import {DEFAULT_COLOR, EMPTY_FC, SEV_KEYS} from "../config.js";
+import {EMPHASIS, EMPTY_FC, SEV_KEYS, hoverFill, selectedFill} from "../config.js";
 import {applyLayerOrder, map, registerPointerSource, registerTooltipLayers, updateResReadout} from "../map.js";
 import {clipToBand, lonRange, nearestCopy} from "../geometry.js";
-import {darken, modelLabel, worstSeverity} from "../format.js";
-import {modelRamp, paletteColor, setModelPalettes, setPalettes, view, visibleModels, visibleSeverities} from "../settings.js";
+import {corroborated, modelLabel, worstSeverity} from "../format.js";
+import {modelRamp, paletteColor, rampFor, setModelPalettes, setPalettes, view, visibleModels, visibleSeverities} from "../settings.js";
 
 let release = null;
 let joined = new Set();            // source ids whose state has been applied
@@ -45,7 +45,6 @@ const SPLIT_SRC = "cells-split";
 const splitId = (res) => `cells-split-${res}`;
 const fillId = (res) => `cells-fill-${res}`;
 const lineId = (res) => `cells-line-${res}`;
-const hashId = (res) => `cells-hash-${res}`;
 
 // Every resolution lives in one archive now, as its own named layer — so a
 // resolution is addressed by (source, source-layer) rather than by a source of its
@@ -61,17 +60,37 @@ const tileRef = (res) => {
 
 // The forecasts in a cell that the model and severity filters still allow. Every
 // derived value below is computed from this rather than from the stored row, so
-// switching a model off changes the map's colours as well as its contents.
+// switching a model off changes the map's colors as well as its contents.
 function visibleForecasts(res, id) {
-  return release.forecastsAt(res, id).filter(
+  const fcs = release.forecastsAt(res, id).filter(
     (f) => visibleModels.has(f.model) && visibleSeverities.has(f.severity));
+  // The concurrence filter is applied HERE rather than at each of the places that
+  // draw something, because this one function is what the paint join, the hover,
+  // the click, the coloring and the split bands all ask. Returning an empty
+  // list is already how "nothing to show here" is spelled, so every one of them
+  // falls into line without being told about the filter separately.
+  // `corroborated`, not `concurs`: the question this filter asks is whether the
+  // forecast is backed up, and it still is when the backing model is switched off.
+  // The strict test made the filter unsatisfiable at one visible model — see the
+  // note on both in format.js.
+  if (fcs.length && view.concurrenceOnly) {
+    const cell = release.cellAt(res, id);
+    if (!cell || !corroborated(cell, visibleModels)) return [];
+  }
+  return fcs;
 }
 
+// Whether this cell is corroborated, given the models on screen. One test for the
+// filter, the `agree` feature-state that colors it, and the heat surface it lands
+// on — they have to be the same question or a cell passes one and fails another.
+//
+// There used to be a second, stricter one for the hatch (every agreeing model had
+// to be visible). The hatch is gone, and with it the only thing that needed it.
 function agrees(cell) {
-  return cell.co_models.some((set) => set.length >= 2 && set.every((m) => visibleModels.has(m)));
+  return corroborated(cell, visibleModels);
 }
 
-// The model whose forecast set the cell's severity — it owns the colour.
+// The model whose forecast set the cell's severity — it owns the color.
 function ownerOf(forecasts) {
   let best = null, rank = -1;
   for (const f of forecasts) {
@@ -85,7 +104,7 @@ function ownerOf(forecasts) {
 
 // Push each visible cell's severity and owner onto its tile feature. Cells with
 // nothing visible are cleared rather than left behind, or a model toggled off
-// would keep its colour until the source reloaded.
+// would keep its color until the source reloaded.
 function applyState(res) {
   const ref = tileRef(res);
   if (!ref || !map.getSource(ref.source)) return;
@@ -101,36 +120,65 @@ function applyState(res) {
 
 // ---- paint ------------------------------------------------------------------
 
-// Colour by the joined severity, in the owning model's palette. Written as a
+// Color by the joined severity, in the owning model's palette. Written as a
 // nested match so one expression covers every model without a layer per model.
-function fillColorExpr() {
-  const byOwner = ["match", ["coalesce", ["feature-state", "owner"], ""]];
-  for (const model of Object.keys(modelRamp)) {
-    const bySev = ["match", ["coalesce", ["feature-state", "severity"], ""]];
-    for (const k of SEV_KEYS) bySev.push(k, paletteColor(modelRamp[model], k));
-    bySev.push("rgba(0,0,0,0)");
-    byOwner.push(model, bySev);
-  }
-  byOwner.push("rgba(0,0,0,0)");
-  return byOwner;
+// Severity in a ramp picked by the cell's own severity.
+function bySeverity(rampId) {
+  const expr = ["match", ["coalesce", ["feature-state", "severity"], ""]];
+  for (const k of SEV_KEYS) expr.push(k, paletteColor(rampId, k));
+  expr.push("rgba(0,0,0,0)");
+  return expr;
 }
 
+function fillColorExpr() {
+  const byOwner = ["match", ["coalesce", ["feature-state", "owner"], ""]];
+  for (const model of Object.keys(modelRamp)) byOwner.push(model, bySeverity(rampFor(model)));
+  byOwner.push("rgba(0,0,0,0)");
+  if (!view.concurHeat) return byOwner;
+  // Concurrence coloring: a corroborated cell is painted in its own ramp instead
+  // of its owner's, matching the concurrence surface on the heat map. The test is
+  // the `agree` feature-state, which applyState sets from the same predicate the
+  // heat uses — so a cell is the same color whichever view is on.
+  return ["case",
+    ["boolean", ["feature-state", "agree"], false], bySeverity(view.concurRampId),
+    byOwner];
+}
+
+// Under the heat map the cells go invisible but stay ON the map: MapLibre only
+// returns features from visible layers, so hiding them properly (visibility:none)
+// would make the surface unclickable — the one thing it must not be. Zero opacity
+// keeps every hexagon a hit target.
+//
+// Hover and selection are the exception, and have to be: without them a click on
+// the heat gives no sign of what was picked, and the panel would be reporting on a
+// hexagon the viewer cannot see.
+//
+// Outline-only mode takes the same bargain, and for the same reason. It used to
+// return a flat 0 and skip the emphasis entirely, which left it the one mode in the
+// app where the shape under the cursor did not lift — the white, heavier border was
+// doing all the work alone. Both modes say "nothing at rest", neither says anything
+// about the pointer, so both now fall through to the hover and selected cases and
+// only their resting value differs. The emphasis works off the fill slider either
+// way: outline-only disables that slider, it does not erase the number behind it.
 function fillOpacityExpr() {
-  if (view.outlineOnly) return 0;
   return ["case",
     ["==", ["coalesce", ["feature-state", "severity"], ""], ""], 0,
-    ["boolean", ["feature-state", "selected"], false], Math.min(1, view.fillOpacity * 0.7),
-    ["boolean", ["feature-state", "hover"], false], Math.min(1, view.fillOpacity * 2),
-    view.fillOpacity];
+    ["boolean", ["feature-state", "selected"], false], selectedFill(view.fillOpacity),
+    ["boolean", ["feature-state", "hover"], false], hoverFill(view.fillOpacity),
+    outlineOnly() || view.heatOn ? 0 : view.fillOpacity];
 }
 
 // Bands live on a GeoJSON source, so they never receive the feature-state join and
 // must not be painted by an expression that reads it — fillOpacityExpr's first
 // case ("no joined severity, draw nothing") is true for every band, which is what
-// made them invisible. Their colour is already stamped per feature, so the only
+// made them invisible. Their color is already stamped per feature, so the only
 // thing left to vary is the resting opacity.
 function splitOpacityExpr() {
-  return view.outlineOnly ? 0 : view.fillOpacity;
+  // The bands exist only on cells holding two or more models, so leaving them
+  // drawn under the heat would put the concurrence cells back on the map by the
+  // back door — the exact thing the surface is meant to have absorbed.
+  if (view.heatOn) return 0;
+  return outlineOnly() ? 0 : view.fillOpacity;
 }
 
 function lineColorExpr() {
@@ -139,7 +187,7 @@ function lineColorExpr() {
     fillColorExpr()];
 }
 
-// Border weight carries severity alongside colour. With the palettes sampled
+// Border weight carries severity alongside color. With the palettes sampled
 // through a narrow band the three rungs are close in tone, so the outline is doing
 // real work here rather than decoration: an extreme cell reads as heavier even
 // where its fill is hard to separate from a warning's. The weights are the
@@ -150,6 +198,13 @@ function lineColorExpr() {
 // sliders, where scaling would stretch the gap between rungs as well.
 const OUTLINE_ONLY_BOOST = 0.8;
 
+// "Outline only" belongs to the CELLS view, and its checkbox is shown only there.
+// A setting the viewer cannot see must not still be acting on the map: left on and
+// then switched to the heat map, it used to flatten the fill of the one hexagon
+// under the cursor to nothing, so a pick on the surface showed a bare outline and
+// no control anywhere explained why. Read through here, never off `view` directly.
+const outlineOnly = () => view.outlineOnly && !view.heatOn;
+
 function severityWidth(byRung, fallback, boost = 0) {
   const expr = ["match", ["coalesce", ["feature-state", "severity"], ""]];
   for (const k of SEV_KEYS) expr.push(k, (byRung[k] || 0) + boost);
@@ -158,12 +213,12 @@ function severityWidth(byRung, fallback, boost = 0) {
 }
 
 function lineWidthExpr() {
-  const base = view.outlineOnly
+  const base = outlineOnly()
     ? severityWidth(view.lineWidth, 2, OUTLINE_ONLY_BOOST)
     : severityWidth(view.lineWidth, 1);
   return ["case",
-    ["boolean", ["feature-state", "selected"], false], 4,
-    ["boolean", ["feature-state", "hover"], false], 3,
+    ["boolean", ["feature-state", "selected"], false], EMPHASIS.selectedLine,
+    ["boolean", ["feature-state", "hover"], false], EMPHASIS.hoverLine,
     base];
 }
 
@@ -174,7 +229,7 @@ function lineWidthExpr() {
  * spell the paint out separately and had already drifted twice: the bands were
  * created with their own opacity but restyled with the tile fill's — which is
  * zero for anything the feature-state join has not reached, so a palette change
- * made them vanish — and the outline's colour was set at creation and never
+ * made them vanish — and the outline's color was set at creation and never
  * updated, so after a ramp change a purple cell kept an amber border. Neither is
  * possible when there is one definition.
  */
@@ -190,67 +245,19 @@ function paintFor(res) {
       "fill-color": ["get", "color"],
       "fill-opacity": splitOpacityExpr(),
     },
-    [hashId(res)]: {
-      "fill-pattern": hashPatternExpr(),
-      "fill-opacity": 0.55,
-    },
     [lineId(res)]: {
       "line-color": lineColorExpr(),
       "line-width": lineWidthExpr(),
+      // Same bargain as the fill: nothing at rest under the heat, but a hovered or
+      // selected hexagon keeps its outline, which is what makes a pick legible
+      // against a blurred surface.
       "line-opacity": ["case",
-        ["==", ["coalesce", ["feature-state", "severity"], ""], ""], 0, 0.85],
+        ["==", ["coalesce", ["feature-state", "severity"], ""], ""], 0,
+        ["boolean", ["feature-state", "selected"], false], EMPHASIS.lineOpacity,
+        ["boolean", ["feature-state", "hover"], false], EMPHASIS.lineOpacity,
+        view.heatOn ? 0 : 0.85],
     },
   };
-}
-
-// ---- hatch ------------------------------------------------------------------
-
-// Whether the concurrence hatch draws at all. One definition, read both when the
-// layer is built and whenever the display settings change, so the two can never
-// disagree about a setting that starts out off.
-const hashVisibility = () => (view.hatchOn && !view.outlineOnly ? "visible" : "none");
-
-function makeHashImage(color, size = 16, w = 2) {
-  const cv = document.createElement("canvas");
-  cv.width = cv.height = size;
-  const g = cv.getContext("2d");
-  g.lineWidth = w;
-  g.lineCap = "square";
-  g.strokeStyle = color;
-  for (const o of [-size, 0, size]) {
-    g.beginPath();
-    g.moveTo(o, size);
-    g.lineTo(size + o, 0);
-    g.stroke();
-  }
-  return g.getImageData(0, 0, size, size);
-}
-
-const hashImageId = (ramp, sev) => `mm-hash-${ramp}-${sev}`;
-
-export function ensureHashImages() {
-  const ramps = new Set(Object.values(modelRamp));
-  for (const ramp of ramps) {
-    for (const k of SEV_KEYS) {
-      const id = hashImageId(ramp, k);
-      if (!map.hasImage(id)) {
-        map.addImage(id, makeHashImage(darken(paletteColor(ramp, k))), {pixelRatio: 2});
-      }
-    }
-  }
-}
-
-// The hatch cannot key off feature-state — a fill-pattern needs a concrete image
-// id per feature, and state cannot be used in a filter either. So agreement is
-// drawn as its own layer whose filter lists the agreeing cells outright, rebuilt
-// whenever the model filter changes.
-function agreeingIds(res) {
-  const out = [];
-  for (const [, cell] of release.cells) {
-    if (cell.res !== res || !agrees(cell)) continue;
-    if (visibleForecasts(res, cell.h3_id).length) out.push(cell.h3_id);
-  }
-  return out;
 }
 
 // ---- split cells ------------------------------------------------------------
@@ -277,7 +284,7 @@ function hexagon(id) {
  *
  * The bands are cut in PANEL_MODELS order so a model always occupies the same
  * slot — a cell's left-hand band is GEOGLOWS wherever GEOGLOWS is present, rather
- * than moving with whichever model happened to be listed first. Colour is stamped
+ * than moving with whichever model happened to be listed first. Color is stamped
  * per feature so the paint is a plain lookup and a palette change is a rebuild of
  * 746 features rather than an expression swap on millions.
  */
@@ -290,13 +297,19 @@ function splitFeatures() {
     const models = Object.keys(modelRamp).filter((m) => fcs.some((f) => f.model === m));
     if (models.length < 2) continue;
 
+    // Concurrence coloring already has an answer for this cell — one hue meaning
+    // "models agree here" — and bands would be arguing with it. Left whole, the
+    // tile fill paints it in the concurrence ramp. With that option off, nothing
+    // changes and the bands behave exactly as they always have.
+    if (view.concurHeat && agrees(cell)) continue;
+
     // Splitting is only worth doing when it shows something. If every model in the
     // cell is on the same palette, the bands would be three shades of one ramp
     // divided by invisible seams — so the cell is left whole and the tile fill
     // paints it at the WORST severity present, which is the reading that matters.
     // Bands come back as soon as two models are on different palettes, where the
     // division carries real information.
-    if (new Set(models.map((m) => modelRamp[m])).size < 2) continue;
+    if (new Set(models.map(rampFor)).size < 2) continue;
 
     const geom = hexagon(cell.h3_id);
     if (!geom) continue;
@@ -326,7 +339,7 @@ function splitFeatures() {
         // tile fill left nothing underneath to hit, so the band itself has to say
         // which cell it belongs to.
         properties: {h3_id: cell.h3_id, res: cell.res, model: b.model,
-                     color: paletteColor(modelRamp[b.model], sev)},
+                     color: paletteColor(rampFor(b.model), sev)},
       });
     }
   }
@@ -337,7 +350,7 @@ function splitFeatures() {
  * The tile fill's filter, minus whatever the bands are covering.
  *
  * Both layers are semi-transparent, so a band drawn over the whole-cell fill would
- * blend with it and show a muddied colour rather than the model's own. A split
+ * blend with it and show a muddied color rather than the model's own. A split
  * cell is therefore cut out of the fill entirely and painted only by its bands,
  * which together cover the hexagon exactly.
  */
@@ -379,7 +392,7 @@ export function build(rel) {
     const paint = paintFor(res);
     map.addLayer({...layer, paint: paint[fillId(res)]});
 
-    // Bands sit directly over the tile fill and under the hatch and outline, so a
+    // Bands sit directly over the tile fill and under the outline, so a
     // split cell reads as one hexagon divided rather than shapes stacked on it.
     if (!map.getSource(SPLIT_SRC)) map.addSource(SPLIT_SRC, {type: "geojson", data: EMPTY_FC});
     map.addLayer({
@@ -387,21 +400,6 @@ export function build(rel) {
       minzoom: layer.minzoom, ...(layer.maxzoom ? {maxzoom: layer.maxzoom} : {}),
       filter: ["==", ["get", "res"], res],
       paint: paint[splitId(res)],
-    });
-
-    ensureHashImages();
-    map.addLayer({
-      id: hashId(res), type: "fill", source: layer.source,
-      "source-layer": layer["source-layer"],
-      minzoom: layer.minzoom, ...(layer.maxzoom ? {maxzoom: layer.maxzoom} : {}),
-      filter: ["in", ["get", "h3_id"], ["literal", agreeingIds(res)]],
-      // Stated at creation, not left to MapLibre's default of "visible". The
-      // hatch is off by default, but refresh() is what used to apply that, and
-      // refresh() does not run until something changes — so the hatch drew on
-      // first load with its own checkbox unticked, and ticking it twice was the
-      // only way to clear it.
-      layout: {visibility: hashVisibility()},
-      paint: paint[hashId(res)],
     });
 
     map.addLayer({
@@ -435,20 +433,6 @@ export function build(rel) {
   refreshSplits();
   bindInteractions();
   applyLayerOrder();
-}
-
-// One image id per (ramp, severity), chosen by the same owner/severity pair the
-// fill uses, so the hatch is always a darker shade of the cell it sits on.
-function hashPatternExpr() {
-  const byOwner = ["match", ["coalesce", ["feature-state", "owner"], ""]];
-  for (const model of Object.keys(modelRamp)) {
-    const bySev = ["match", ["coalesce", ["feature-state", "severity"], ""]];
-    for (const k of SEV_KEYS) bySev.push(k, hashImageId(modelRamp[model], k));
-    bySev.push(hashImageId(modelRamp[model], SEV_KEYS[0]));
-    byOwner.push(model, bySev);
-  }
-  byOwner.push(hashImageId(modelRamp[Object.keys(modelRamp)[0]], SEV_KEYS[0]));
-  return byOwner;
 }
 
 // ---- interaction ------------------------------------------------------------
@@ -538,7 +522,7 @@ function selectCell(res, id) {
 
 function bindInteractions() {
   // Both the tile fills and the bands are hit targets. A split cell exists only as
-  // bands — it is cut out of the fill so the colours stay clean — so querying the
+  // bands — it is cut out of the fill so the colors stay clean — so querying the
   // fills alone would make exactly the cells with two models unclickable.
   // `cells-fill-6` and `cells-split-6` both end in the resolution, so one parse
   // handles either kind of hit.
@@ -558,6 +542,11 @@ function bindInteractions() {
       const res = Number(String(f.layer.id).split("-").pop());
       const id = f.properties.h3_id;
       setHover({res, id});
+      // AFTER setHover, deliberately: the toggle silences the label, it does not
+      // stop the cell lighting up or being clickable. Returning "" is how a source
+      // says it has nothing to put in the tooltip, so flash can still fill it on an
+      // overlap.
+      if (!view.cellTooltip) return "";
       const cell = release.cellAt(res, id);
       const fcs = visibleForecasts(res, id);
       if (!cell || !fcs.length) return "";
@@ -603,16 +592,15 @@ function bindInteractions() {
 // ---- restyling --------------------------------------------------------------
 
 // A palette change is paint only. A model or severity toggle also changes which
-// cells qualify, so it re-runs the join and the hatch filters — but never
+// cells qualify, so it re-runs the join — but never
 // refetches a tile, because the geometry did not change.
 // Opacity and outline-only are pure paint. They never change which cells qualify,
-// so the join and the hatch filters are left alone — this is the cheap path the
+// so the join is left alone — this is the cheap path the
 // slider drags through.
 export function applyFillStyle() { refresh({rejoin: false}); }
 
 export function refresh({rejoin = true} = {}) {
   if (!release) return;
-  ensureHashImages();
   for (const layer of release.rules.layers || []) {
     const res = Number(String(layer.id).split("-").pop());
     // Re-apply every property of every layer from the one definition, rather than
@@ -623,13 +611,9 @@ export function refresh({rejoin = true} = {}) {
         map.setPaintProperty(id, prop, value);
       }
     }
-    if (map.getLayer(hashId(res))) {
-      map.setLayoutProperty(hashId(res), "visibility", hashVisibility());
-      if (rejoin) map.setFilter(hashId(res), ["in", ["get", "h3_id"], ["literal", agreeingIds(res)]]);
-    }
     if (rejoin) applyState(res);
   }
-  // Bands carry their colours as data, so any restyle rebuilds them. 746 features
+  // Bands carry their colors as data, so any restyle rebuilds them. 746 features
   // is cheaper to regenerate than to express as a data-driven paint.
   refreshSplits();
 }

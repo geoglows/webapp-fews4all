@@ -220,7 +220,7 @@ def read_glofas(path):
     # field in 72.7%.
     #
     # The cell keeps the WORST severity among its pixels, which is what the
-    # hexagon is already coloured by, so nothing on the map moves — only the
+    # hexagon is already colored by, so nothing on the map moves — only the
     # repeated row leaves. Choosing the most DOWNSTREAM pixel would be better
     # hydrology, but these files carry no flow direction and no upstream area,
     # just a value per pixel; and it could resolve an extreme-and-danger pair
