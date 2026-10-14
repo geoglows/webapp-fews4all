@@ -26,10 +26,10 @@
 //   its own zoom band, so there is no zoomend handler swapping data — the map
 //   simply stops requesting one archive and starts requesting the next.
 import {cellToBoundary, cellToLatLng} from "h3-js";
-import {EMPHASIS, EMPTY_FC, SEV_KEYS, hoverFill, selectedFill} from "../config.js";
+import {CONCUR_COUNTS, EMPHASIS, EMPTY_FC, SEV_KEYS, hoverFill, selectedFill} from "../config.js";
 import {applyLayerOrder, map, registerPointerSource, registerTooltipLayers, updateResReadout} from "../map.js";
 import {clipToBand, lonRange, nearestCopy} from "../geometry.js";
-import {corroborated, modelLabel, worstSeverity} from "../format.js";
+import {concurCount, corroborated, modelLabel, worstSeverity} from "../format.js";
 import {modelRamp, paletteColor, rampFor, setModelPalettes, setPalettes, view, visibleModels, visibleSeverities} from "../settings.js";
 
 let release = null;
@@ -112,8 +112,11 @@ function applyState(res) {
     if (cell.res !== res) continue;
     const fcs = visibleForecasts(res, cell.h3_id);
     const state = fcs.length
-      ? {severity: worstSeverity(fcs), owner: ownerOf(fcs), agree: agrees(cell)}
-      : {severity: "", owner: "", agree: false};
+      // `agree` is the COUNT of models sharing the cell, not a flag: 0, 2 or 3.
+      // It used to be a boolean, which could only ever say "someone agrees" — and
+      // the ramps are now per count, so the paint needs the number itself.
+      ? {severity: worstSeverity(fcs), owner: ownerOf(fcs), agree: concurCount(cell, visibleModels)}
+      : {severity: "", owner: "", agree: 0};
     map.setFeatureState({...ref, id: cell.h3_id}, state);
   }
 }
@@ -139,9 +142,16 @@ function fillColorExpr() {
   // of its owner's, matching the concurrence surface on the heat map. The test is
   // the `agree` feature-state, which applyState sets from the same predicate the
   // heat uses — so a cell is the same color whichever view is on.
-  return ["case",
-    ["boolean", ["feature-state", "agree"], false], bySeverity(view.concurRampId),
-    byOwner];
+  // Highest count first, so a three-way cell cannot be caught by the two-way test
+  // on its way past. `coalesce` to 0 rather than leaning on a boolean cast: the
+  // state is a number now, and an absent one has to compare as "nobody agrees".
+  const n = ["coalesce", ["feature-state", "agree"], 0];
+  const expr = ["case"];
+  for (const c of [...CONCUR_COUNTS].reverse()) {
+    expr.push([">=", n, c], bySeverity(view.concurRamp[c]));
+  }
+  expr.push(byOwner);
+  return expr;
 }
 
 // Under the heat map the cells go invisible but stay ON the map: MapLibre only

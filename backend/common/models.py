@@ -107,7 +107,7 @@ def read_geoglows(path):
             r = blank_record()
             r.update({
                 "model": "geoglows", "severity": sev, "native_id": str(comid),
-                "return_period_yr": int(rp), "peak_discharge_cms": mean,
+                "return_period_yr": int(rp), "flow_cms": mean,
                 "lat": _f(row.get("lat")), "lon": _f(row.get("lon")),
             })
             out.append(r)
@@ -136,7 +136,7 @@ def read_flood_hub(path):
                 "return_period_yr": _s(row.get("returnPeriodYr")),
                 # `discharge` was the column name before the world_flood_status
                 # export; both are read so an older release still loads.
-                "peak_discharge_cms": _s(row.get("dischargePeak_m3s") or row.get("discharge")),
+                "flow_cms": _s(row.get("dischargePeak_m3s") or row.get("discharge")),
                 "issued_time": _s(row.get("issuedTime")),
                 "start_time": _s(row.get("forecastTimeRange.start")),
                 "peak_time": _s(row.get("peakTime")),
@@ -174,7 +174,7 @@ def read_glofas(path):
     20 km away at the median and disagrees on the alert level once in five, which
     would be a guess dressed as a fact.
 
-    `peak_discharge_cms` and `start_time` stay blank, as they were on the point
+    `flow_cms` and `start_time` stay blank, as they were on the point
     path — GloFAS publishes neither. `lead_time_days` is blank off the overlay:
     meanLT.nc looks like the gridded `LeadtimeH` but matches it on only 9.8% of
     the points where both exist, so it is a different quantity and is not used.
@@ -257,7 +257,7 @@ def read_glofas(path):
             "severity": C.GLOFAS_SEVERITY[group],
             "native_id": pt.get("native_id") or f"g{la:.3f}_{lo:.3f}",
             "return_period_yr": C.GLOFAS_RETURN_PERIOD[group],
-            "peak_discharge_cms": "",
+            "flow_cms": "",
             "issued_time": pt.get("issued_time") or issued,
             "peak_time": pt.get("peak_time", ""),
             "lead_time_days": pt.get("lead_time_days", ""),
