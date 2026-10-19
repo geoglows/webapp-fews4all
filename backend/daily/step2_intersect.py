@@ -128,11 +128,14 @@ def match_lines(records, crosswalk_path):
     """(cell, uid) for every line forecast, by streaming the reach crosswalk.
 
     The crosswalk is ~12.5M rows, so it is read once, streamed, and tested against
-    the flagged reaches rather than loaded. A row is one (cell, segment) crossing,
-    so several segments of the same reporting reach routinely cross one cell —
-    about 56% of rows repeat a (cell, report_id) pair. Those collapse here, or a
-    cell would list the same forecast several times over and every count built on
-    top of it would be inflated.
+    the flagged reaches rather than loaded. Matching is on C.CROSSWALK_ID_COL,
+    which is the reach's own id — see the note there for why it is not report_id,
+    and what joining the wrong column cost.
+
+    A (cell, reach) pair can still repeat, because one reach can cross a cell more
+    than once where the line re-enters it. Those collapse here, or a cell would
+    list the same forecast several times over and every count built on top of it
+    would be inflated.
     """
     by_reach = {r["native_id"]: r["forecast_uid"] for r in records}
     if not by_reach:

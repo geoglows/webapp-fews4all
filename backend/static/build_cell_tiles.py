@@ -2,14 +2,30 @@
 """Static build — the H3 cell geometry archive, as PMTiles.
 
 Built once. The daily run never touches this: a release says WHICH cells are
-flagged, and this archive says what a cell looks like. Rebuild it only when the
-universe of cells changes, which in practice means when the impact table is
-rebuilt.
+flagged, and this archive says what a cell looks like. Rebuild it when the
+universe of cells changes.
 
-The universe is exactly the impact table's res-6 cells plus their ancestors. That
-keeps the archive to land drainage — about 4.4M hexagons rather than the 16.5M a
-full global res-3-6 grid would need — and makes it self-consistent: any cell with
-geometry also has impact.
+THE UNIVERSE IS A UNION, NOT THE IMPACT TABLE
+
+It used to be exactly the impact table's res-6 cells plus their ancestors, which
+read as self-consistency — any cell with geometry also has impact — and was in
+fact a bug with a silent failure mode. The two facts are unrelated. A cell needs
+geometry because some model can flag it; whether we hold exposure numbers for it
+is a separate question about a separate dataset. Where they disagreed, the loser
+was the map: the cell appeared in cells.csv with a severity and had no hexagon,
+so it could not be drawn, hovered, clicked or reported on, and nothing said so.
+
+Hawaii is the case that found it. 36 cells flagged by GloFAS, 31 of them extreme,
+and no geometry for any of them — because the impact table is built from HUC12
+basins, which have never heard of Hawaii. Nor, it turns out, have the GEOGLOWS
+stream crosswalk or HydroRIVERS: all three descend from the same hydrography and
+share its blind spots, so unioning them changes nothing there. Only GloFAS's own
+0.05-degree river mask knows those cells exist, which is why the patch file in
+C.CELL_UNIVERSE_SOURCES is part of the design rather than a workaround.
+
+Cost of the union, measured: 676 cells on top of the impact table's 3,751,739, so
+the archive is the same size it always was — about 4.4M hexagons across the four
+resolutions, against the 16.5M a full global res-3-6 grid would need.
 
 One archive holding one layer per resolution. H3's resolutions already ARE the
 level of detail, so each occupies its own zoom band and no tile is ever asked to
@@ -104,16 +120,32 @@ def hexagon_wkb(boundary):
 
 
 def read_universe(limit=None):
-    """The res-6 cells the archive covers, and every ancestor of them."""
+    """The res-6 cells the archive covers, and every ancestor of them.
+
+    The union of C.CELL_UNIVERSE_SOURCES, not the impact table alone. Geometry
+    exists because something can flag the cell; having exposure numbers for it is
+    a separate fact, and tying the two meant a flagged cell with no impact row had
+    no hexagon on the map at all. Sources that are missing are skipped with a
+    note — the archive should still build from whatever is on disk.
+    """
     import h3
-    r6 = []
-    with open(C.CELL_IMPACT_TABLE, newline="", encoding="utf-8-sig") as f:
-        rd = csv.reader(f)
-        next(rd)
-        for row in rd:
-            r6.append(row[0])
-            if limit and len(r6) >= limit:
-                break
+    seen = set()
+    for path, col in C.CELL_UNIVERSE_SOURCES:
+        if not os.path.exists(path):
+            print(f"  note: no {os.path.basename(path)}; skipped", file=sys.stderr)
+            continue
+        before = len(seen)
+        with open(path, newline="", encoding="utf-8-sig") as f:
+            rd = csv.reader(f)
+            next(rd, None)
+            for row in rd:
+                if len(row) > col and row[col]:
+                    seen.add(row[col].strip())
+        print(f"  {os.path.basename(path):<28} +{len(seen) - before:>9,} new "
+              f"(total {len(seen):,})")
+    r6 = sorted(seen)
+    if limit:
+        r6 = r6[:limit]
     by_res = {6: r6}
     for res in (5, 4, 3):
         child = by_res[res + 1]
@@ -163,11 +195,12 @@ def ogr2ogr_command(fgb_path, res):
 
 def main(limit=None):
     os.makedirs(OUT_DIR, exist_ok=True)
-    if not os.path.exists(C.CELL_IMPACT_TABLE):
-        sys.exit(f"Not found: {C.CELL_IMPACT_TABLE}\nBuild the impact table first.")
+    if not any(os.path.exists(p) for p, _c in C.CELL_UNIVERSE_SOURCES):
+        sys.exit("No cell-universe source found. Build the impact table first "
+                 f"({C.CELL_IMPACT_TABLE}).")
 
     t0 = time.time()
-    print("Reading the cell universe from the impact table...")
+    print("Reading the cell universe...")
     by_res = read_universe(limit)
     for res in sorted(by_res):
         print(f"  res {res}: {len(by_res[res]):>10,} cell(s)")

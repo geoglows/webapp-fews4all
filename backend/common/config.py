@@ -33,7 +33,26 @@ FILES = os.path.join(ROOT, "Files")                   # static reference data
 # h3_id (res 6) -> river_id, report_id. The reach crosswalk: every cell a
 # GEOGLOWS reach passes through, which is how a line becomes a set of cells.
 CROSSWALK_CSV = os.path.join(FILES, "h3_streams_global_r6.csv")
-CROSSWALK_ID_COL = "report_id"    # the reach a forecast is issued against
+# `river_id`, NOT `report_id`. The two columns answer different questions and this
+# was joined on the wrong one, silently and with a bias.
+#
+#   river_id   WHICH REACH is this. One row per (cell, reach) crossing. The id a
+#              GEOGLOWS forecast carries as its comid.
+#   report_id  WHICH REACH SPEAKS FOR THIS CELL. A per-(cell, reach) answer, not a
+#              property of the reach: streams.py's resolution rules precomputed, so
+#              the same river carries different report_ids in different cells.
+#
+# A reach only ever appears in the report_id column if it is the representative of
+# some cell somewhere, which trunks are and tributaries largely are not. Joining
+# the day's comids against it therefore dropped every reach that is nobody's
+# representative: 10,594 of 19,490 flagged reaches in the release this was found
+# on — 54%, and biased toward small streams rather than spread evenly.
+#
+# The deduplication report_id was standing in for still happens, further down, in
+# step 2's resolve_reaches via the real network rules in common/streams.py. That is
+# where it belongs: it needs to know which reaches are flagged TOGETHER in a cell,
+# which a precomputed column cannot.
+CROSSWALK_ID_COL = "river_id"
 
 BASE_RES = 6                      # the resolution everything is decided at
 RESOLUTIONS = [3, 4, 5, 6]        # ...then rolled up to, in step 3
@@ -122,6 +141,7 @@ CELL_DELIVERY_COLUMNS = CELL_COLUMNS + IMPACT_FIELDS
 FORECAST_DELIVERY_COLUMNS = FORECAST_COLUMNS + ["district", "district_level"]
 
 CELL_IMPACT_TABLE = os.path.join(BACKEND, "static", "cell_impact_r6.csv")
+
 
 # geoBoundaries CGAZ, tried finest first. ADM2 does not tile every country —
 # Uruguay's units cover 37% of its area, Norway's 70% — so an ADM2-only lookup
@@ -250,6 +270,38 @@ RES_ZOOM_STEP = 2
 HYDRORIVERS_SHP = os.path.join(INPUT_DIR, "HydroRIVERS_v10", "HydroRIVERS_v10.shp")
 HYDRORIVERS_TOPOLOGY_CSV = os.path.join(BACKEND, "static", "hydrorivers_topology.csv")
 HYDRORIVERS_CROSSWALK_CSV = os.path.join(BACKEND, "static", "h3_hydrorivers_r6.csv")
+# ---- the cell universe ----------------------------------------------------
+# Which cells the geometry archive covers. This used to BE the impact table, and
+# that coupling was a bug: a cell needs geometry because something can flag it,
+# which is a different question from whether we have exposure numbers for it.
+# Where the two disagreed the cell was flagged in the tables and had no hexagon
+# on the map at all — invisible, unhoverable, unclickable. Hawaii is the case
+# that found it: 36 GloFAS cells, 31 of them extreme, absent from the map.
+#
+# So the universe is a UNION of every source that can put a cell on the map, and
+# the impact table is one contributor among them rather than the definition.
+# Each entry is (path, column holding the h3 id); a source that is not present is
+# skipped with a note rather than failing the build.
+#
+# The extra file is the patch hatch. The three bulk sources all descend from the
+# same hydrography and share its blind spots — none of them has ever heard of
+# Hawaii — so there has to be somewhere to put cells that only one model knows
+# about, without re-plumbing anything. build_cell_universe.py writes it.
+# The canonical registry: the one file that says which res-6 cells exist.
+# Written by static/build_cell_universe.py as a union of land, the crosswalks
+# and the GloFAS river mask. Read by the tile build as its universe, and by
+# nothing else — in particular it is never used to filter a forecast.
+CELL_UNIVERSE = os.path.join(BACKEND, "static", "cell_universe_r6.csv")
+# Superseded by CELL_UNIVERSE; kept as a source so an existing patch file is
+# still honoured rather than silently dropped.
+CELL_UNIVERSE_EXTRA = os.path.join(BACKEND, "static", "cell_universe_extra.csv")
+CELL_UNIVERSE_SOURCES = [
+    (CELL_UNIVERSE, 0),               # the registry, once built
+    (CELL_IMPACT_TABLE, 0),
+    (CROSSWALK_CSV, 0),                    # GEOGLOWS reaches
+    (HYDRORIVERS_CROSSWALK_CSV, 0),        # Flood Hub's network
+    (CELL_UNIVERSE_EXTRA, 0),              # whatever the above still miss
+]
 # A gauge whose id is not a `hybas_` code (today: CWC, ANA, BWDB, MOI — 32 of 99)
 # has no join key, so it is snapped to the nearest reach instead: the res-6 cell it
 # sits in, then rings outward to this radius. Two rings is about 12 km, which is
