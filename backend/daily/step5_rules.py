@@ -36,9 +36,12 @@ writes the same three files. It stays here so a release folder is self-contained
 import csv
 import os
 import sys
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import config as C          # noqa: E402
+from common.tables import write_csv   # noqa: E402
+from common import manifest as MAN     # noqa: E402
 
 LAYER_COLUMNS = ["res", "source_id", "url", "source_layer", "promote_id",
                  "minzoom", "maxzoom"]
@@ -76,17 +79,15 @@ def model_rows():
             for i, m in enumerate(C.MODEL_ORDER)]
 
 
-def write_csv(path, columns, rows):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(columns)
-        w.writerows(rows)
-    return os.path.getsize(path)
+
+def _stamp(out_dir, **fields):
+    """Append this step's result to the release's run record. Never fatal."""
+    fields["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    MAN.update(out_dir, steps={'step5_rules': fields})
 
 
 def main(release_dir=None):
-    out_dir = release_dir or C.latest_release()
+    out_dir = release_dir or C.current_release()
     if not out_dir:
         sys.exit(f"No release folder under {C.OUTPUT_DIR}. Run step 2 first.")
     cells_path = os.path.join(out_dir, "cells.csv")
@@ -114,6 +115,8 @@ def main(release_dir=None):
     print(f"\nWrote {out_dir}")
     for name, n, size in written:
         print(f"  {name:<16} {n:>4} row(s)  {size / 1024:>6.1f} KB")
+    _stamp(out_dir, tables={name: n for name, n, _ in written},
+           cells_per_res={res: per_res.get(res, 0) for res in C.RESOLUTIONS})
 
 
 if __name__ == "__main__":

@@ -18,7 +18,8 @@ import "./style.css";                       // Tailwind + theme + MapLibre overr
 import "maplibre-gl/dist/maplibre-gl.css";  // MapLibre's own stylesheet (from npm)
 
 import {DATASETS} from "./config.js";
-import {RELEASE_BASE} from "./sources.js";
+import {resolveRelease} from "./sources.js";
+import {showRelease} from "./ui/header.js";
 import {loadRelease} from "./release.js";
 import {map, registerPanelFocus} from "./map.js";
 import {view, visibleFlashModels} from "./settings.js";
@@ -110,7 +111,13 @@ map.once("load", () => {
   // until the first click hides the legend exactly when it is most needed.
   panel.renderPanel(null);
 
-  loadRelease(RELEASE_BASE)
+  // Which release to draw comes from the pipeline's own pointer rather than a
+  // constant in the source, so the morning's run reaches the map without an edit.
+  resolveRelease()
+    .then(({release: name, base}) => loadRelease(base).then((release) => {
+      showRelease(release, name);
+      return release;
+    }))
     .then((release) => {
       cells.build(release);
       heat.build(release);

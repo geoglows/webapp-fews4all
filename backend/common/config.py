@@ -54,6 +54,62 @@ CROSSWALK_CSV = os.path.join(FILES, "h3_streams_global_r6.csv")
 # which a precomputed column cannot.
 CROSSWALK_ID_COL = "river_id"
 
+# ---- running daily against live data ---------------------------------------
+# A live feed fails differently from an archive. An archive is absent or complete;
+# a feed is late, truncated, empty, or yesterday's file left in place. The rules
+# below are the ones that decide whether a model is trusted into a release.
+#
+# The governing choice, and it is a forecasting-operations choice rather than a
+# code one: a release is written WITHOUT a model we cannot vouch for, and says so.
+# A thin map that carries today's date beats a complete map nobody can date.
+
+# The name of the per-release run record. Holds, per model, the file used and its
+# timestamp, the issue date, the counts, and the status with its reasons. Every
+# question about "what did we actually publish that morning" is answered here, and
+# it is also the baseline the volume check reads from.
+MANIFEST_NAME = "run.json"
+MANIFEST_BASELINE_N = 10          # how many past releases the volume check averages
+
+# The release steps 3 to 5 are meant to operate on, written by step 2 when it
+# finishes. Before this, each later step independently picked "the newest folder",
+# which is a different question and answers it wrongly in the two cases that
+# matter: a rerun of an older release (the later steps would wander off onto a
+# newer one) and a step 2 that died midway (the later steps would happily decorate
+# a half-written folder). A step that finds no pointer still falls back to newest,
+# because refusing to run at all is the worse failure.
+RELEASE_POINTER = "current_release.txt"
+
+# Where a run is assembled before anyone can see it. The published release is only
+# complete once step 5 has finished — step 3 rewrites cell_forecasts.csv, step 4
+# rewrites cells.csv with its impact columns — so a run that dies at step 4 used
+# to leave the live folder holding a cells.csv the app cannot read. Building in
+# here and moving the finished folder into place at the end means the live release
+# is either last night's, whole, or this morning's, whole.
+STAGING_DIR = ".staging"
+
+# How far a model's issue date may trail the newest model in the same run before
+# it is dropped as stale. Models publish on their own cycles, so same-day is too
+# strict; a day and a half absorbs a late cycle without absorbing yesterday's file.
+MODEL_DATE_SPREAD_DAYS = 1.5
+# ...and how far behind TODAY the whole release may be before the run says so.
+RELEASE_MAX_AGE_DAYS = 2
+
+# A model delivering far fewer forecasts than it usually does is the signature of a
+# truncated download or an empty upstream response. It is only ever a WARNING: a
+# genuinely quiet day looks the same from here, and discarding real forecasts on a
+# heuristic is worse than publishing a thin one with a note attached. Zero
+# forecasts from a file that exists is the exception — that is not a quiet day,
+# that is a file with no data in it.
+MODEL_VOLUME_FLOOR = 0.25         # fraction of the recent median that reads as thin
+
+# Statuses a model can carry into a release.
+#   ok        read, dated, and trusted
+#   thin      read and trusted, but far below its usual volume
+#   skipped   no input file at all
+#   dropped   read but not trustworthy — stale, undateable, or unreadable
+MODEL_OK, MODEL_THIN, MODEL_SKIPPED, MODEL_DROPPED = "ok", "thin", "skipped", "dropped"
+
+
 BASE_RES = 6                      # the resolution everything is decided at
 RESOLUTIONS = [3, 4, 5, 6]        # ...then rolled up to, in step 3
 
@@ -335,6 +391,44 @@ CELLS_TILES_URL = "pmtiles:///backend/static/tiles/cells.pmtiles"
 # tile with no way to tell them apart.
 CELLS_SOURCE_LAYER = "cells_r{res}"
 CELLS_PROMOTE_ID = "h3_id"        # feature-state (hover/selection) needs a stable id
+
+
+def release_pointer(output_dir=None):
+    return os.path.join(output_dir or OUTPUT_DIR, RELEASE_POINTER)
+
+
+def write_release_pointer(release, output_dir=None):
+    """Record which release the later steps should work on. Never fatal."""
+    try:
+        p = release_pointer(output_dir)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            f.write(release.strip() + "\n")
+        os.replace(tmp, p)
+        return p
+    except OSError as e:
+        print(f"  note: could not write {RELEASE_POINTER} ({e})")
+        return None
+
+
+def current_release(output_dir=None):
+    """The release step 2 last published, or the newest folder if there is no
+    pointer. Returns a path, or None when the output directory holds no release.
+    """
+    root = output_dir or OUTPUT_DIR
+    try:
+        with open(release_pointer(output_dir), encoding="utf-8") as f:
+            name = f.read().strip()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name):
+            path = os.path.join(root, name)
+            if os.path.isdir(path):
+                return path
+            print(f"  note: {RELEASE_POINTER} names {name}, which does not exist "
+                  f"— falling back to the newest release")
+    except OSError:
+        pass
+    return latest_release(output_dir)
 
 
 def latest_release(output_dir=None):

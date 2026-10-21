@@ -22,7 +22,6 @@ Adding a fourth model means writing one function here and one entry in READERS.
 import csv
 import glob
 import os
-import sys
 
 from . import config as C
 
@@ -186,15 +185,41 @@ def read_glofas(path):
     issued = _glofas_issued(stamp)
     folder = os.path.dirname(path)
 
-    lat = lon = None
-    level_of = None
+    # A missing companion grid is not a partial loss, because the levels NEST:
+    # every extreme pixel is also a high pixel and a medium one, and a pixel is
+    # reported at the highest grid that still has it over threshold. So dropping a
+    # grid does not drop those forecasts — it hands them to the next grid down and
+    # publishes them one severity too low. An extreme flood reported as high is
+    # the one failure an early warning system must never ship quietly, and it
+    # looks like a perfectly ordinary release from every side.
+    #
+    # The lowest grid is the exception, and only because it is the file this
+    # reader is handed: without it there is no GloFAS input to find at all, and
+    # step 2 records the model as skipped before reaching here.
+    #
+    # So: any companion grid missing means GloFAS is left out of the release.
+    # Step 2 catches this and writes the day without it, which is honest — a map
+    # with three models and a note beats a map with four and a wrong one.
+    floor = min(C.GLOFAS_GRID_LEVELS)
+    found = {}
     for group in sorted(C.GLOFAS_GRID_LEVELS):                 # 1, 2, 3
         name = os.path.basename(path).replace(
             f"sumAL_{C.GLOFAS_GRID_LEVELS[1]}_AL_",
             f"sumAL_{C.GLOFAS_GRID_LEVELS[group]}_AL_")
-        p = os.path.join(folder, name)
-        if not os.path.exists(p):
-            sys.exit(f"{os.path.basename(path)}: companion grid not found: {name}")
+        q = os.path.join(folder, name)
+        if os.path.exists(q):
+            found[group] = q
+        elif group != floor:
+            raise RuntimeError(
+                f"{os.path.basename(path)}: the {C.GLOFAS_GRID_LEVELS[group]} grid "
+                f"({name}) is missing. The levels nest, so without it every pixel "
+                f"that reaches {C.GLOFAS_GRID_LEVELS[group]} would be published at "
+                f"the severity below it. GloFAS is left out of this release rather "
+                f"than understated.")
+
+    lat = lon = None
+    level_of = None
+    for group, p in sorted(found.items()):
         with netCDF4.Dataset(p) as d:
             if lat is None:
                 lat = np.asarray(d.variables["lat"][:])

@@ -18,6 +18,14 @@
         <p class="text-slate-800/80 text-xs truncate">Multi-Model Global Flood Early Warning System</p>
       </div>
     </div>
+
+    <!-- The day being drawn. Filled by src/ui/header.js once the release loads;
+         the dashes are what shows while it is still in flight. -->
+    <div class="shrink-0 text-right min-w-0" id="release">
+      <p class="text-slate-800/60 text-[10px] uppercase tracking-wider">Forecast release</p>
+      <time class="block text-black font-semibold text-sm tabular-nums" id="release-date">—</time>
+      <p class="text-[11px] truncate text-slate-800/70" id="release-note"></p>
+    </div>
   </header>
 
   <main class="flex flex-1 min-h-0" id="main">

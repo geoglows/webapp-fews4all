@@ -41,6 +41,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import admin               # noqa: E402
+from common.tables import write_csv   # noqa: E402
+from common import manifest as MAN     # noqa: E402
 from common import config as C         # noqa: E402
 
 
@@ -100,17 +102,15 @@ def read_rows(path):
         return list(csv.DictReader(f))
 
 
-def write_csv(path, columns, rows):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(columns)
-        w.writerows(rows)
-    return os.path.getsize(path)
+
+def _stamp(out_dir, **fields):
+    """Append this step's result to the release's run record. Never fatal."""
+    fields["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    MAN.update(out_dir, steps={'step4_summary': fields})
 
 
 def main(release_dir=None):
-    out_dir = release_dir or C.latest_release()
+    out_dir = release_dir or C.current_release()
     if not out_dir:
         sys.exit(f"No release folder under {C.OUTPUT_DIR}. Run step 2 first.")
     cells_path = os.path.join(out_dir, "cells.csv")
@@ -159,6 +159,9 @@ def main(release_dir=None):
           f"   (+{len(C.IMPACT_FIELDS)} impact column(s))")
     print(f"  forecasts.csv        {len(out_fc):>7,} row(s)  {f_bytes / 1e6:>6.2f} MB"
           f"   (+district, district_level)")
+    _stamp(out_dir, cells=len(out_cells), cells_with_impact=with_impact,
+           forecasts=len(out_fc), forecasts_placed=placed,
+           impact_cells_found=len(impact), impact_cells_wanted=len(wanted))
 
 
 if __name__ == "__main__":

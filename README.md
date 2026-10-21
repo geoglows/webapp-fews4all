@@ -23,7 +23,10 @@ npm run preview    # preview the built site
 - `index.html` — page shell, loads `/src/main.js`
 - `src/` — the app, one module per concern (below)
 - `public/` — the GeoJSON the app fetches, plus static assets
-- `scripts/` — the Python pipeline that builds that GeoJSON
+- `backend/daily/` — the per-run pipeline (steps 2–5, and `run_daily.py`)
+- `backend/static/` — the builds that only change when the inputs do (cell registry, tiles, crosswalks)
+- `backend/common/` — config, model readers, the run record, shared table writers
+- `backend/test/` — `python3 backend/test/test_guards.py`, the live-data guards
 - `test/` — `npm test` (node --test); pure modules only
 - `Other/parked/` — code removed from the app but kept, each file noting how to restore it
 - `Files/` — input CSVs, basin parquets, impact stats (gitignored)
@@ -46,8 +49,11 @@ panel.js       the side panel — renders only
 sources.js     where every GeoJSON lives
 icons.js       SVG icons inlined at build time
 ui/dropdown.js the icon-button dropdown every control is built on
-layers/        cells.js (H3 + basins), flash.js, streams.js, boundaries.js
-controls/      display.js, context.js, basemap.js
+ui/form.js     the shared check/heading/note pieces the control panels are built from
+ui/header.js   the release stamp in the top bar
+release.js     one release's tables, parsed and joined; pure below `loadRelease`
+layers/        cells_tiles.js, flash.js, streams.js, heat.js
+controls/      display.js, filters.js, basemap.js, pointer.js
 ```
 
 Dependencies run one way: `controls/` → `layers/` → `map.js` → the pure modules.
@@ -55,6 +61,49 @@ Where that would loop — the panel's filters act on the layers, and the layers
 render into the panel — the callee takes an `init({...})` of callbacks that
 `main.js` supplies, so nothing imports its own caller. `main.js` is the only place
 those connections exist, and the only place to look for them.
+
+## The daily run
+
+```
+python3 backend/daily/run_daily.py                       # steps 2-5, published at the end
+python3 backend/daily/run_daily.py --input <folder>      # rerun one archived day
+python3 backend/test/test_guards.py                      # the live-data guards
+```
+
+The four steps are not independent — step 3 rewrites step 2's join table, step 4
+rewrites step 3's cells.csv — so a release is only readable once all four have
+run. `run_daily.py` builds the whole run inside `backend/output/.staging/` and
+moves the finished folder into place as its last act, keeping the previous
+release beside it until that move lands. The published release is therefore
+either yesterday's in full or this morning's in full; there is no half-built
+state for the app to find.
+
+**Which release the app draws** comes from `backend/output/current_release.txt`,
+written by the run when it finishes. The front end follows it, so a new run
+reaches the map without an edit or a redeploy. Nothing is hardcoded except a
+last-resort fallback in `src/sources.js` for a static deployment that ships one
+release and no pointer.
+
+**What a release contains, and what it is missing**, is in `run.json` beside the
+tables: per model, the file that was read and when it was written, the issue date
+and where that date came from, the counts, and a status with its reasons. It is
+also the baseline — "far fewer forecasts than usual" is measured against what this
+pipeline itself published on the preceding days, not a number typed into config.
+
+A model is only ever dropped, never allowed to spoil the run:
+
+| what happened | what the run does |
+| --- | --- |
+| no input file | model skipped, release written without it |
+| file unreadable, or a reader refuses it | model dropped, reason recorded |
+| a GloFAS severity grid is missing | GloFAS dropped — the levels nest, so a missing grid would publish real floods one severity too low |
+| no reach-to-cell crosswalk | GEOGLOWS left ungridded, the point models still publish |
+| issue date trails the rest of the run | model dropped as stale (yesterday's file left in the folder) |
+| far fewer forecasts than its recent median | kept and flagged `thin` — a quiet day looks the same from here, and discarding real forecasts on a heuristic is worse |
+| a file that exists but holds nothing | kept and flagged `thin` — that is not a quiet day |
+| no model delivers anything usable | the run refuses, and the published release is untouched |
+
+The top bar states the day on screen, and names any model that is not in it.
 
 ## Display Options
 

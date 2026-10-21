@@ -233,6 +233,20 @@ function buildRules(style, cells) {
 export const TABLES = ["cells.csv", "forecasts.csv", "cell_forecasts.csv",
                        "layers.csv", "palettes.csv", "models.csv"];
 
+// The run record step 2 writes beside the tables: which file each model was read
+// from, what it was dated, and whether it was trusted into the release. Optional
+// by design — the map does not need it to draw, so a release published before
+// run.json existed still loads. It is what lets the header say which day is on
+// screen and which models are behind it.
+export async function loadRun(base) {
+  try {
+    const r = await fetch(base + "run.json", {cache: "no-store"});
+    return r.ok ? await r.json() : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function loadRelease(base) {
   const root = base.endsWith("/") ? base : base + "/";
   const [cellsText, forecastsText, rollupText, layersText, palettesText, modelsText] =
@@ -245,5 +259,7 @@ export async function loadRelease(base) {
     palettes: toObjects(parseCsv(palettesText)),
     models: toObjects(parseCsv(modelsText)),
   };
-  return buildRelease(style, cellsText, forecastsText, rollupText);
+  const release = buildRelease(style, cellsText, forecastsText, rollupText);
+  release.run = await loadRun(root);
+  return release;
 }

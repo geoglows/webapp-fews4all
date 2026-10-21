@@ -38,6 +38,8 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import config as C          # noqa: E402
+from common.tables import write_csv   # noqa: E402
+from common import manifest as MAN     # noqa: E402
 
 
 def read_forecasts(path):
@@ -122,17 +124,15 @@ def build(base, meta):
     return rows, rollup
 
 
-def write_csv(path, columns, rows):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(columns)
-        w.writerows(rows)
-    return os.path.getsize(path)
+
+def _stamp(out_dir, **fields):
+    """Append this step's result to the release's run record. Never fatal."""
+    fields["finished"] = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    MAN.update(out_dir, steps={'step3_compare': fields})
 
 
 def main(release_dir=None):
-    out_dir = release_dir or C.latest_release()
+    out_dir = release_dir or C.current_release()
     if not out_dir:
         sys.exit(f"No release folder under {C.OUTPUT_DIR}. Run step 2 first.")
     f_path = os.path.join(out_dir, "forecasts.csv")
@@ -167,6 +167,9 @@ def main(release_dir=None):
     print(f"\nWrote {out_dir}")
     print(f"  cells.csv            {len(rows):>7,} row(s)  {c_bytes / 1e6:>6.2f} MB")
     print(f"  cell_forecasts.csv   {len(rollup):>7,} row(s)  {r_bytes / 1e6:>6.2f} MB")
+    _stamp(out_dir, cells=len(rows), cell_forecasts=len(rollup),
+           by_res={res: by_res.get(res, [0, 0])[0] for res in C.RESOLUTIONS},
+           agreement={res: by_res.get(res, [0, 0])[1] for res in C.RESOLUTIONS})
 
 
 if __name__ == "__main__":

@@ -56,26 +56,91 @@ from common import config as C
 from common import streams as S          # noqa: E402
 from common import hydrorivers as HR    # noqa: E402
 from common import models as M          # noqa: E402
+from common import manifest as MAN      # noqa: E402
+from common.tables import write_csv, write_text   # noqa: E402
 
 
-def load_all(input_dir):
-    """Every model's flagged forecasts, tagged with a uid unique across the run.
+def model_date(records, path):
+    """(date, where it came from) for one model's file.
+
+    The issue date the model itself publishes, when it publishes one — the modal
+    value, because a release can carry a stray row from a neighbouring cycle. Not
+    every model does: GEOGLOWS's export carries no issue time at all, so the file's
+    own modification time stands in. That is a weaker signal and is labelled as
+    such, because "the file was written today" and "the forecast is for today" are
+    not the same claim and the manifest should not pretend otherwise.
+    """
+    from collections import Counter
+    dates = Counter(str(r.get("issued_time", ""))[:10] for r in records
+                    if str(r.get("issued_time", "")).strip())
+    if dates:
+        return dates.most_common(1)[0][0], "issued_time"
+    try:
+        return time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(path))), "file mtime"
+    except OSError:
+        return "", "unknown"
+
+
+def _days_between(a, b):
+    from datetime import date
+    try:
+        ya, ma, da = (int(x) for x in a.split("-"))
+        yb, mb, db = (int(x) for x in b.split("-"))
+        return abs((date(ya, ma, da) - date(yb, mb, db)).days)
+    except (ValueError, AttributeError):
+        return None
+
+
+def load_all(input_dir, output_dir=None):
+    """Every model's flagged forecasts, each model isolated from the others.
 
     The uid is `model:native_id`. Native ids are unique within a model in every
     release seen so far, but that is a property of the data rather than a promise
     the format makes, so a collision is disambiguated and reported instead of
     silently collapsing two forecasts into one.
+
+    ONE MODEL CANNOT TAKE DOWN THE RUN. A missing file was always survivable; an
+    unreadable one was not, and that is backwards for a live feed, where a
+    truncated download or a changed column is far likelier than a file that never
+    arrives. Every reader is now called inside a guard, and a model that throws is
+    recorded and left out rather than ending the morning.
+
+    Returns (by_model, records, status) where `status` is the per-model manifest
+    rows — the record of what was read, what it was dated, and what was trusted.
     """
-    by_model, records = {}, []
+    by_model, records, status = {}, [], {}
     for model, (reader, kind) in M.READERS.items():
+        row = {"status": C.MODEL_SKIPPED, "kind": kind, "notes": []}
+        status[model] = row
+        by_model[model] = {"kind": kind, "path": None, "records": []}
+
         path = M.find_input(model, input_dir)
         if not path:
+            row["notes"].append("no input file in the folder")
             print(f"  {model:<10} no input file found — skipped", file=sys.stderr)
-            by_model[model] = {"kind": kind, "path": None, "records": []}
             continue
+        row["file"] = os.path.basename(path)
+        try:
+            row["file_mtime"] = time.strftime(
+                "%Y-%m-%dT%H:%M:%S", time.localtime(os.path.getmtime(path)))
+        except OSError:
+            pass
 
         t0 = time.time()
-        found = reader(path)
+        try:
+            found = reader(path)
+        except SystemExit as e:              # a reader that still exits on bad input
+            row["status"] = C.MODEL_DROPPED
+            row["notes"].append(f"reader refused the file: {e}")
+            print(f"  {model:<10} UNREADABLE ({e}) — dropped", file=sys.stderr)
+            continue
+        except Exception as e:
+            row["status"] = C.MODEL_DROPPED
+            row["notes"].append(f"unreadable: {type(e).__name__}: {e}")
+            print(f"  {model:<10} UNREADABLE ({type(e).__name__}: {e}) — dropped",
+                  file=sys.stderr)
+            continue
+
         seen, dupes = set(), 0
         for r in found:
             uid = f"{model}:{r['native_id']}"
@@ -84,12 +149,105 @@ def load_all(input_dir):
                 uid = f"{uid}#{dupes}"
             seen.add(uid)
             r["forecast_uid"] = uid
-        records.extend(found)
+        row["flagged"] = len(found)
+        row["issued"], row["issued_from"] = model_date(found, path)
+        row["status"] = C.MODEL_OK
+        if dupes:
+            row["notes"].append(f"{dupes} duplicate native id(s) disambiguated")
+        if not found:
+            # A file that exists and yields nothing is not a quiet day — a quiet
+            # day still has a handful of warnings somewhere on earth. It is a
+            # truncated download, a changed column name, or a reader quietly
+            # parsing a file that is no longer the shape it expects. Marked thin
+            # rather than ok so the morning says so; it contributes no rows
+            # either way, so nothing is lost by keeping it in the release.
+            row["status"] = C.MODEL_THIN
+            row["notes"].append("file present but held no flagged forecasts")
+
         by_model[model] = {"kind": kind, "path": path, "records": found}
+        records.extend(found)
         print(f"  {model:<10} {len(found):>6,} flagged  ({kind}s)  "
               f"{os.path.basename(path)}  {time.time() - t0:.1f}s"
               + (f"  [{dupes} duplicate native id(s) disambiguated]" if dupes else ""))
-    return by_model, records
+    return by_model, records, status
+
+
+def apply_guards(by_model, status, release=None, output_dir=None):
+    """Decide which models are trustworthy enough to go into the release.
+
+    Two checks, and they are deliberately different in severity.
+
+    STALENESS DROPS. A model whose date trails the freshest model in the run by
+    more than the tolerance is yesterday's file left in the folder — the failure
+    the whole pipeline is least able to notice on its own, because a stale file
+    reads as perfectly valid data. It is dropped, and the release is written
+    without it.
+
+    VOLUME ONLY WARNS. A model far below its recent median is the signature of a
+    truncated download, but it is also exactly what a genuinely quiet day looks
+    like from here. Discarding real forecasts on a heuristic is worse than
+    publishing a thin release with a note on it, so this marks the model `thin`
+    and keeps every row.
+
+    Returns (release, dropped_models).
+    """
+    # Which date names the release. Not simply the freshest: the dates are not
+    # equally trustworthy. A model that publishes an issue time is stating what
+    # the forecast is FOR; a file mtime is only stating when a download finished,
+    # and a download that ran after midnight would otherwise name the whole
+    # release a day ahead of every model in it — and then strand those models as
+    # "stale" against a date none of them claimed. So the models that date
+    # themselves decide, and mtime is consulted only when none of them do.
+    dated = {m: r["issued"] for m, r in status.items()
+             if r.get("issued") and r["status"] == C.MODEL_OK}
+    stated = {m: d for m, d in dated.items()
+              if status[m].get("issued_from") == "issued_time"}
+    newest = max(stated.values()) if stated else (max(dated.values()) if dated else None)
+    release = release or newest or time.strftime("%Y-%m-%d")
+
+    dropped = []
+    for model, r in status.items():
+        if r["status"] != C.MODEL_OK or not r.get("issued"):
+            continue
+        gap = _days_between(r["issued"], release)
+        if gap is not None and r["issued"] > release:
+            # Ahead of the release, not behind it — a file written after the
+            # release's own cycle. Nothing is stale about that.
+            gap = 0
+        if gap is not None and gap > C.MODEL_DATE_SPREAD_DAYS:
+            r["status"] = C.MODEL_DROPPED
+            r["notes"].append(
+                f"issued {r['issued']} ({r['issued_from']}), {gap} day(s) behind the "
+                f"release — stale, left out")
+            dropped.append(model)
+            print(f"  {model:<10} STALE: dated {r['issued']}, release is {release} "
+                  f"— dropped", file=sys.stderr)
+
+    for model, r in status.items():
+        if r["status"] != C.MODEL_OK or not r.get("flagged"):
+            continue
+        base = MAN.baseline(model, output_dir, exclude=release)
+        if not base:
+            continue
+        r["baseline"] = base
+        if r["flagged"] < base * C.MODEL_VOLUME_FLOOR:
+            r["status"] = C.MODEL_THIN
+            r["notes"].append(
+                f"{r['flagged']:,} forecasts against a recent median of {base:,.0f} "
+                f"— kept, but check the feed")
+            print(f"  {model:<10} THIN: {r['flagged']:,} vs median {base:,.0f} "
+                  f"— kept with a warning", file=sys.stderr)
+
+    # Age of the release itself, relative to the day it is being built.
+    gap = _days_between(release, time.strftime("%Y-%m-%d"))
+    if gap is not None and gap > C.RELEASE_MAX_AGE_DAYS:
+        print(f"  note: this release is dated {release}, {gap} day(s) ago — "
+              f"rerunning an archive, or no model delivered today's file",
+              file=sys.stderr)
+
+    for model in dropped:
+        by_model[model] = {"kind": by_model[model]["kind"], "path": None, "records": []}
+    return release, dropped
 
 
 def match_points(records):
@@ -118,10 +276,9 @@ def write_areas(records, path):
         "properties": {"forecast_uid": r["forecast_uid"], "model": r["model"],
                        "severity": r["severity"]},
     } for r in records if r.get("_geometry")]
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump({"type": "FeatureCollection", "features": feats}, f)
-    return len(feats), os.path.getsize(path)
+    size = write_text(path, json.dumps({"type": "FeatureCollection",
+                                        "features": feats}))
+    return len(feats), size
 
 
 def match_lines(records, crosswalk_path):
@@ -191,7 +348,7 @@ def resolve_reaches(pairs, by_reach):
     net = S.Network().load()
     if not net.ready:
         print("  note: no stream attribute table; reaches left as matched "
-              f"(build it with static/build_stream_attrs.py)", file=sys.stderr)
+              "(build it with static/build_stream_attrs.py)", file=sys.stderr)
         return pairs, {}
 
     uid_of = {}
@@ -224,52 +381,39 @@ def _reach_int(reach):
         return None
 
 
-def write_csv(path, columns, rows):
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    with open(path, "w", newline="", encoding="utf-8") as f:
-        w = csv.writer(f)
-        w.writerow(columns)
-        w.writerows(rows)
-    return os.path.getsize(path)
-
-
 def derive_release(input_dir, records):
-    """What to call this release.
-
-    It used to be the input folder's name, which worked while each release sat in
-    its own dated folder. A live feed drops into one folder that is always called
-    `input`, so the name now comes from the data — the date the models themselves
-    say they were issued. A folder that IS named for something specific still wins,
-    so an archived release can still be rerun in place.
+    """A folder named for something specific still wins, so an archived release
+    can be rerun in place. Otherwise the date comes from the models themselves,
+    in apply_guards — which picks the FRESHEST model rather than the most common
+    date. Majority vote was the old rule and it had GloFAS, the model with the most
+    rows, able to name the release from a stale file and quietly pull a second
+    day's forecasts in with it.
     """
     base = os.path.basename(os.path.normpath(input_dir))
-    if base not in ("input", ""):
-        return base
-    from collections import Counter
-    dates = Counter(str(r.get("issued_time", ""))[:10] for r in records
-                    if str(r.get("issued_time", "")).strip())
-    if dates:
-        return dates.most_common(1)[0][0]
-    from datetime import date
-    print("  note: no model published an issue time; naming the release by today",
-          file=sys.stderr)
-    return date.today().isoformat()
+    return base if base not in ("input", "") else None
 
 
-def main(input_dir=None, output_dir=None, release=None):
+def main(input_dir=None, output_dir=None, release=None, staging=False):
     input_dir = input_dir or C.INPUT_DIR
     if not os.path.isdir(input_dir):
         sys.exit(f"Input folder not found: {input_dir}")
     print(f"Input: {input_dir}\n")
 
     print("Reading models (flagged forecasts only):")
-    by_model, records = load_all(input_dir)
-    if not records:
-        sys.exit("No flagged forecasts in any model — nothing to intersect.")
-
+    by_model, records, status = load_all(input_dir, output_dir)
     release = release or derive_release(input_dir, records)
-    out_dir = os.path.join(output_dir or C.OUTPUT_DIR, release)
-    print(f"\nRelease: {release}")
+    release, dropped = apply_guards(by_model, status, release, output_dir)
+    if dropped:
+        records = [r for r in records
+                   if r["forecast_uid"].split(":", 1)[0] not in set(dropped)]
+    if not records:
+        sys.exit("No model delivered a usable forecast — refusing to write an "
+                 "empty release over the last good one.")
+
+    root = output_dir or C.OUTPUT_DIR
+    out_dir = (os.path.join(root, C.STAGING_DIR, release) if staging
+               else os.path.join(root, release))
+    print(f"\nRelease: {release}" + ("   (staged)" if staging else ""))
 
     print(f"\nIntersecting with the res-{C.BASE_RES} grid:")
     pairs = []
@@ -303,9 +447,19 @@ def main(input_dir=None, output_dir=None, release=None):
                   f"({fs.get('claimed_reaches', 0):,} reach(es) claimed)")
 
     line_records = [r for m in by_model.values() if m["kind"] == "line" for r in m["records"]]
+    if line_records and not os.path.exists(C.CROSSWALK_CSV):
+        # Not fatal: the point models and the gauge fill have already produced
+        # their cells, and a map missing one model beats no map at all. The line
+        # models are recorded as dropped so the manifest says why they vanished.
+        print(f"  note: no crosswalk at {C.CROSSWALK_CSV}; GEOGLOWS reaches "
+              f"left ungridded", file=sys.stderr)
+        for m, row in status.items():
+            if row.get("kind") == "line" and row["status"] in (C.MODEL_OK, C.MODEL_THIN):
+                row["status"] = C.MODEL_DROPPED
+                row["notes"].append("no reach-to-cell crosswalk; left ungridded")
+        line_records = []
+
     if line_records:
-        if not os.path.exists(C.CROSSWALK_CSV):
-            sys.exit(f"Crosswalk not found: {C.CROSSWALK_CSV}")
         t0 = time.time()
         lns, (rows, dupes, resolved) = match_lines(line_records, C.CROSSWALK_CSV)
         pairs.extend(lns)
@@ -357,6 +511,38 @@ def main(input_dir=None, output_dir=None, release=None):
     if a_count:
         print(f"  flash_areas.geojson    {a_count:>7,} area(s)  {a_bytes / 1e6:>6.2f} MB"
               f"   ungridded, joined on forecast_uid")
+
+    # The run record, and the pointer that tells steps 3 to 5 which release this
+    # was. Both are written last, on success only: a pointer to a half-written
+    # folder is worse than no pointer, because the later steps would believe it.
+    gridded = {}
+    for cell, uid in pairs:
+        gridded.setdefault(uid.split(":", 1)[0], set()).add(cell)
+    for model, row in status.items():
+        row["cells"] = len(gridded.get(model, ()))
+        if not row["notes"]:
+            row.pop("notes")
+    data = MAN.blank(release)
+    data["models"] = status
+    data["steps"]["step2_intersect"] = {
+        "finished": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "input_dir": input_dir,
+        "forecasts": len(kept),
+        "cell_forecasts": len(pairs),
+        "cells": cells,
+        "orphans": orphans,
+        "flash_areas": a_count,
+    }
+    if dropped:
+        data["notes"].append("models left out of this release: " + ", ".join(sorted(dropped)))
+    MAN.write(out_dir, data)
+    # Staged runs leave the pointer alone: run_daily moves it once the whole
+    # pipeline has finished, so nothing ever points at a part-built release.
+    if not staging:
+        C.write_release_pointer(release, output_dir)
+    print(f"  {C.MANIFEST_NAME:<22} the run record\n")
+    print(MAN.summarise(data))
+    return release
 
 
 if __name__ == "__main__":
