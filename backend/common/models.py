@@ -22,6 +22,8 @@ Adding a fourth model means writing one function here and one entry in READERS.
 import csv
 import glob
 import os
+import sys
+from datetime import datetime
 
 from . import config as C
 
@@ -64,36 +66,255 @@ def find_input(model, input_dir=None):
     modification time wins when a folder holds more than one release, and the
     caller is told which file was chosen — picking the wrong day's file silently
     is the worst failure this pipeline could have.
+
+    A dated folder falls back to the input root. Step 1 fetches into
+    input/<YYYY-MM-DD>/, but only GEOGLOWS is automated so far, and without this a
+    live run would publish a one-model release while the other three sat in the
+    folder above. Looking in the dated folder FIRST and the root second means each
+    model moves from hand-placed to fetched on its own, with no flag day — and the
+    moment a model is automated, its fetched file shadows whatever is in the root.
+
+    The fallback is deliberately one level and only to the configured input root,
+    so it can never wander into a different day's folder.
     """
-    root = input_dir or C.INPUT_DIR
-    hits = []
-    for pattern in C.INPUT_GLOBS[model]:
-        hits.extend(glob.glob(os.path.join(root, pattern)))
-    if not hits:
-        return None
-    return max(hits, key=os.path.getmtime)
+    root = input_dir or C.current_input()
+    places = [root]
+    parent = os.path.dirname(os.path.normpath(root))
+    if os.path.normpath(root) != os.path.normpath(C.INPUT_DIR) and \
+            os.path.normpath(parent) == os.path.normpath(C.INPUT_DIR):
+        places.append(C.INPUT_DIR)
+
+    for place in places:
+        hits = []
+        for pattern in C.INPUT_GLOBS[model]:
+            hits.extend(glob.glob(os.path.join(place, pattern)))
+        if hits:
+            return max(hits, key=os.path.getmtime)
+    return None
 
 
 # ---- per-model readers -----------------------------------------------------
 
-def read_geoglows(path):
-    """Flooding GEOGLOWS reaches, keyed by the reach a forecast is issued against.
+def reach_points(comids):
+    """{comid: (lat, lon)} for the reaches asked for, from the static table.
 
-    GEOGLOWS has no severity label — only a return period — so the ladder in
-    config turns years into the shared vocabulary. A reach whose mean flow is
-    below the floor is dropped: a trickle can clear its 2-year return period on
-    noise alone, and flagging it would put a warning on a dry channel.
+    The daily map-tables carry no coordinates, and admin.assign places a forecast
+    by coordinate alone, so this is what keeps a GEOGLOWS forecast knowing which
+    district it is in. Built by static/build_reach_points.py.
 
-    This is the only model whose forecasts are LINES. The record carries no
-    geometry; step 2 turns a reach id into its cells through the crosswalk.
+    The table is sorted by comid and written in row groups, so the reader skips
+    most of the file on its statistics rather than scanning 6.8M rows: measured at
+    0.67s against 6.85s for a streamed gzip of the same data.
     """
-    out = []
+    import pyarrow.compute as pc
+    import pyarrow.dataset as ds
+
+    want = sorted({int(c) for c in comids})
+    if not want:
+        return {}
+    if not os.path.exists(C.REACH_POINTS):
+        print(f"  note: no {os.path.basename(C.REACH_POINTS)}; GEOGLOWS forecasts "
+              f"will have no coordinates, so no district either "
+              f"(build it with static/build_reach_points.py)", file=sys.stderr)
+        return {}
+    t = ds.dataset(C.REACH_POINTS, format="parquet").to_table(
+        columns=["comid", "lat", "lon"], filter=pc.field("comid").isin(want))
+    return {int(c): (float(la), float(lo)) for c, la, lo in
+            zip(t["comid"].to_pylist(), t["lat"].to_pylist(), t["lon"].to_pylist())}
+
+
+def _cycle_of(path):
+    """`mapstyletable_201_2026082200.parquet` -> ('2026082200', datetime).
+
+    The cycle is in the filename, and it is the only authoritative statement of
+    when this forecast was issued — the rows themselves carry valid times, not an
+    issue time, and a file's mtime says when we downloaded it. Before this,
+    GEOGLOWS was the one model with no issue date of its own, which is why the run
+    record had to fall back to mtime for it.
+    """
+    stem = os.path.basename(path).rsplit(".", 1)[0]
+    tail = stem.rsplit("_", 1)[-1]
+    if len(tail) == 10 and tail.isdigit():
+        try:
+            return tail, datetime(int(tail[0:4]), int(tail[4:6]),
+                                  int(tail[6:8]), int(tail[8:10]))
+        except ValueError:
+            pass
+    return "", None
+
+
+def _valid_of(path):
+    """`mapstyletable_2026-10-21-06_2026102100.csv` -> datetime(2026,10,21,6).
+
+    The bucket names each map-table CSV for the time the forecast is VALID, not
+    for the cycle that produced it — the cycle is the folder. step1_fetch appends
+    the cycle stamp when it saves one, so a local file carries both.
+
+    Returns None for the older archived files, which carry neither, and for
+    anything that does not parse. A missing valid time costs the record its
+    peak_time; it never costs the forecast.
+    """
+    stem = os.path.basename(path).rsplit(".", 1)[0]
+    for part in stem.split("_"):
+        bits = part.split("-")
+        if len(bits) == 4 and all(b.isdigit() for b in bits):
+            try:
+                return datetime(int(bits[0]), int(bits[1]), int(bits[2]), int(bits[3]))
+            except ValueError:
+                pass
+    return None
+
+
+def _cycle_siblings(path):
+    """Every per-VPU parquet of the SAME cycle sitting beside `path`.
+
+    Matched on the cycle stamp rather than on "every parquet in the folder", so a
+    folder that ended up holding two cycles reads as one of them instead of
+    silently blending a day's forecasts with yesterday's.
+    """
+    stamp, _ = _cycle_of(path)
+    if not stamp:
+        return [path]
+    pattern = os.path.join(os.path.dirname(path), f"*_{stamp}.parquet")
+    return sorted(glob.glob(pattern)) or [path]
+
+
+def _publish_step(files, cycle):
+    """(timestamp, note) — which step of the forecast this release reports.
+
+    C.GEOGLOWS_FORECAST_HOUR on the cycle's own date.
+
+    The step is chosen from the TIME GRID the files publish, never from the steps
+    that happen to carry a flag. Those are different questions, and answering the
+    second one looks right until a quiet morning: if nothing floods anywhere at
+    06:00, "the steps with flags" would not contain 06:00, and the reader would
+    silently report a different hour than the config claims.
+
+    One file is probed rather than all of them — every VPU in a cycle shares the
+    same time axis — and the probe pushes an equality filter down, so it reads the
+    statistics of a few row groups rather than any data.
+
+    Replacing this with a max-over-window rule is a change to this function and the
+    filter that uses it; every step is already in the files.
+    """
+    import pyarrow.compute as pc
+    import pyarrow.dataset as ds
+
+    one = ds.dataset(files[0], format="parquet")
+
+    def grid():
+        return sorted(set(one.to_table(columns=["timestamp"])["timestamp"].to_pylist()))
+
+    if cycle is None:
+        steps = grid()
+        return (steps[0] if steps else None), "cycle unknown; took the first step"
+
+    target = cycle.replace(hour=C.GEOGLOWS_FORECAST_HOUR, minute=0,
+                           second=0, microsecond=0)
+    probe = one.to_table(columns=["timestamp"],
+                         filter=pc.equal(pc.field("timestamp"), target))
+    if probe.num_rows:
+        return target, ""
+
+    steps = grid()
+    if not steps:
+        return None, "the parquets carry no timesteps"
+    nearest = min(steps, key=lambda t: abs(t - target))
+    return nearest, (f"this cycle publishes no {target:%Y-%m-%d %H:%M} step; "
+                     f"reporting {nearest:%Y-%m-%d %H:%M} instead")
+
+
+def _severity(rp):
+    return next((s for yr, s in C.GEOGLOWS_THRESHOLDS if rp >= yr), None)
+
+
+def _geoglows_record(comid, rp, mean, cycle, step, pts):
+    la, lo = pts.get(comid, ("", ""))
+    r = blank_record()
+    r.update({
+        "model": "geoglows", "severity": _severity(rp), "native_id": str(comid),
+        "return_period_yr": int(rp), "flow_cms": mean,
+        "lat": la, "lon": lo,
+    })
+    if cycle:
+        r["issued_time"] = cycle.strftime("%Y-%m-%dT%H:%M:%SZ")
+        if step:
+            r["peak_time"] = step.strftime("%Y-%m-%dT%H:%M:%SZ")
+            r["lead_time_days"] = round((step - cycle).total_seconds() / 86400, 2)
+    return r
+
+
+def read_geoglows_parquet(path):
+    """Flooding GEOGLOWS reaches, from one cycle's per-VPU parquets.
+
+    Each parquet holds one VPU's whole horizon — every reach at all 81 three-hourly
+    steps — as `timestamp, comid, mean, thickness, ret_per`. Almost none of it is a
+    flood: measured on one VPU, 832 of 3,434,562 rows clear the 2-year return
+    period, and globally the flagged share is about 0.3%. So the step and the
+    thresholds are pushed down into the reader together and whole row groups are
+    skipped without being decompressed.
+
+    The return-period floor comes from the configured ladder rather than a literal,
+    so moving a threshold cannot leave the pushdown filtering on the old one.
+    """
+    import pyarrow.compute as pc
+    import pyarrow.dataset as ds
+
+    files = _cycle_siblings(path)
+    stamp, cycle = _cycle_of(path)
+    step, why = _publish_step(files, cycle)
+    if why:
+        print(f"  note: geoglows {why}", file=sys.stderr)
+    if step is None:
+        return []
+
+    floor = min(yr for yr, _ in C.GEOGLOWS_THRESHOLDS)
+    expr = (pc.equal(pc.field("timestamp"), step)) & (pc.field("ret_per") >= floor)
+    if C.GEOGLOWS_MIN_MEAN_FLOW:
+        expr = expr & (pc.field("mean") >= C.GEOGLOWS_MIN_MEAN_FLOW)
+
+    rows = ds.dataset(files, format="parquet").to_table(
+        columns=["comid", "mean", "ret_per"], filter=expr)
+
+    comids = [int(c) for c in rows["comid"].to_pylist()]
+    means = rows["mean"].to_pylist()
+    rps = rows["ret_per"].to_pylist()
+    pts = reach_points(comids)
+    out = [_geoglows_record(c, rp, m, cycle, step, pts)
+           for c, rp, m in zip(comids, rps, means) if _severity(rp)]
+
+    lead = f" (+{(step - cycle).total_seconds() / 3600:.0f}h)" if cycle else ""
+    print(f"  geoglows   {len(files)} parquet(s), cycle {stamp or '?'}, "
+          f"reporting {step:%Y-%m-%d %H:%M}Z{lead}")
+    missing = sum(1 for r in out if r["lat"] == "")
+    if missing:
+        print(f"  note: {missing:,} GEOGLOWS reach(es) are not in "
+              f"{os.path.basename(C.REACH_POINTS)}; they will have no district",
+              file=sys.stderr)
+    return out
+
+
+def read_geoglows_csv(path):
+    """One timestep of the map-table, as CSV.
+
+    GEOGLOWS has no severity label — only a return period — so the ladder in config
+    turns years into the shared vocabulary. A reach whose mean flow is below the
+    floor is dropped: a trickle can clear its 2-year return period on noise alone,
+    and flagging it would put a warning on a dry channel.
+
+    Two vintages arrive here and the difference is the coordinates. The archived
+    files carry lat/lon per row; the bucket's carry only
+    `comid, mean, thickness, ret_per`. Where the columns are absent the static
+    reach table supplies them, so a forecast keeps its district either way — and
+    the lookup runs once for the whole file rather than per row.
+    """
+    out, need = [], []
     with open(path, newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
             rp = _f(row.get("ret_per"))
             if rp is None:
                 continue
-            sev = next((s for yr, s in C.GEOGLOWS_THRESHOLDS if rp >= yr), None)
+            sev = _severity(rp)
             if sev is None:
                 continue
             mean = _f(row.get("mean"))
@@ -103,14 +324,56 @@ def read_geoglows(path):
                 comid = int(float(str(row.get("comid", "")).strip()))
             except ValueError:
                 continue
+            la, lo = _f(row.get("lat")), _f(row.get("lon"))
             r = blank_record()
             r.update({
                 "model": "geoglows", "severity": sev, "native_id": str(comid),
                 "return_period_yr": int(rp), "flow_cms": mean,
-                "lat": _f(row.get("lat")), "lon": _f(row.get("lon")),
+                "lat": "" if la is None else la, "lon": "" if lo is None else lo,
             })
+            if la is None or lo is None:
+                need.append((comid, r))
             out.append(r)
+
+    if need:
+        pts = reach_points(c for c, _ in need)
+        for comid, r in need:
+            if comid in pts:
+                r["lat"], r["lon"] = pts[comid]
+        missing = sum(1 for _c, r in need if r["lat"] == "")
+        if missing:
+            print(f"  note: {missing:,} GEOGLOWS reach(es) are not in "
+                  f"{os.path.basename(C.REACH_POINTS)}; they will have no district",
+                  file=sys.stderr)
+
+    # The filename is the only place a CSV states when it was issued. Archived
+    # files carry neither stamp, and then the run record falls back to mtime as
+    # it always did.
+    _stamp, cycle = _cycle_of(path)
+    valid = _valid_of(path)
+    if cycle:
+        issued = cycle.strftime("%Y-%m-%dT%H:%M:%SZ")
+        for r in out:
+            r["issued_time"] = issued
+            if valid:
+                r["peak_time"] = valid.strftime("%Y-%m-%dT%H:%M:%SZ")
+                r["lead_time_days"] = round((valid - cycle).total_seconds() / 86400, 2)
     return out
+
+
+def read_geoglows(path):
+    """Flooding GEOGLOWS reaches, keyed by the reach a forecast is issued against.
+
+    This is the only model whose forecasts are LINES. The record carries no
+    geometry; step 2 turns a reach id into its cells through the crosswalk.
+
+    Two shapes reach this, and which one arrives is decided by the file extension
+    rather than by configuration: the per-VPU parquets the bucket publishes, and
+    the single-timestep CSV the earlier releases were built from.
+    """
+    if str(path).lower().endswith(".parquet"):
+        return read_geoglows_parquet(path)
+    return read_geoglows_csv(path)
 
 
 def read_flood_hub(path):

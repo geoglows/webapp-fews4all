@@ -54,6 +54,11 @@ CROSSWALK_CSV = os.path.join(FILES, "h3_streams_global_r6.csv")
 # which a precomputed column cannot.
 CROSSWALK_ID_COL = "river_id"
 
+# Where each GEOGLOWS v2 reach is. Built by static/build_reach_points.py.
+# The daily map-tables carry no coordinates, and admin.assign places a forecast by
+# coordinate alone, so without this every GEOGLOWS forecast loses its district.
+REACH_POINTS = os.path.join(BACKEND, "static", "reach_points_v2.parquet")
+
 # ---- running daily against live data ---------------------------------------
 # A live feed fails differently from an archive. An archive is absent or complete;
 # a feed is late, truncated, empty, or yesterday's file left in place. The rules
@@ -78,6 +83,13 @@ MANIFEST_BASELINE_N = 10          # how many past releases the volume check aver
 # a half-written folder). A step that finds no pointer still falls back to newest,
 # because refusing to run at all is the worse failure.
 RELEASE_POINTER = "current_release.txt"
+
+# The input folder step 1 last filled, read by step 2 when it is not told which
+# folder to use. The same bargain as the release pointer: written only after a
+# fetch lands cleanly, so it never names a folder that is still filling, and
+# falling back to the flat input directory when there is no pointer at all — which
+# is what an archived release laid out by hand looks like.
+INPUT_POINTER = "current_input.txt"
 
 # Where a run is assembled before anyone can see it. The published release is only
 # complete once step 5 has finished — step 3 rewrites cell_forecasts.csv, step 4
@@ -116,7 +128,10 @@ RESOLUTIONS = [3, 4, 5, 6]        # ...then rolled up to, in step 3
 # Input files are discovered by shape, not by exact name, because the names
 # carry the release date and change every run.
 INPUT_GLOBS = {
-    "geoglows": ["mapstyletable*.csv"],
+    # Parquet first: a cycle publishes ~161 per-VPU parquets carrying the whole
+    # 10-day horizon, against ~81 global CSVs of one timestep each. The CSV
+    # pattern is kept so an archived release can still be rerun in place.
+    "geoglows": ["mapstyletable*.parquet", "mapstyletable*.csv"],
     "flood_hub": ["world_flood_status*.csv", "Flood_Hub_Global*.csv"],
     # The 2-year grid. The other two levels sit beside it under the same stamp,
     # and the reporting points (RPG_U*.shp) ride along as an attribute overlay.
@@ -134,6 +149,61 @@ SEVERITY_RANK = {"warning": 1, "danger": 2, "extreme": 3}
 # why its ThresGroup maps straight across.
 GEOGLOWS_THRESHOLDS = [(20, "extreme"), (5, "danger"), (2, "warning")]
 GEOGLOWS_MIN_MEAN_FLOW = 5        # drop trickles that clear a return period on noise
+
+# Which timestep of the forecast a release reports, as an hour UTC on the cycle's
+# own date. The parquets carry all 81 three-hourly steps out to ten days, so this
+# is a reporting policy rather than a download decision — changing it costs one
+# edit and no extra bytes.
+#
+# A single step matches what the map showed before, and it is a KNOWN COMPROMISE
+# rather than a neutral default. Two things are wrong with it, both deliberate for
+# now and both worth re-reading before anyone assumes this is settled.
+#
+# It does not mean what the other models mean. GloFAS publishes the maximum across
+# its four lead-time windows, so a GloFAS flag says "worst case within the
+# horizon" while this says "conditions at 06Z". Concurrence between them is
+# therefore not quite comparing like with like.
+#
+# And a 3-hourly snapshot can miss the flood entirely. Measured on VPU 201 (an
+# alpine region, so near the worst case) for the 2026-08-22 00Z cycle:
+#
+#     06Z snapshot          0 reaches
+#     max over that day    39 reaches   11 extreme, 14 danger, 14 warning
+#     max over 10 days     47 reaches   20 extreme,  6 danger, 21 warning
+#
+#     caught by hour:  00Z 4/39   03Z 1/39   06Z 0/39   09Z 0/39
+#                      12Z 11/39  15Z 31/39  18Z 21/39  21Z 6/39
+#
+# Nothing flagged at 06Z on a day when eleven reaches reached extreme nine hours
+# later, and the best single hour still missed 8 of 39. Small steep catchments
+# peak in hours; a large-river VPU would be far less sensitive, and globally the
+# map does not go empty. But the mechanism is general.
+#
+# The fix is a max over a window, which costs no extra bytes — the parquets carry
+# every step. _publish_step and the filter in read_geoglows_parquet are written to
+# make that a contained change.
+GEOGLOWS_FORECAST_HOUR = 6
+
+# ---- where the GEOGLOWS forecast comes from --------------------------------
+# A public bucket; no credentials. One folder per cycle, named YYYYMMDDHH, always
+# at hour 00. Objects land roughly five hours after the cycle time (the 2026-10-21
+# 00Z cycle was written at 04:49 UTC), and the bucket keeps about 110 cycles, so
+# there is a three-month window to rerun against.
+GEOGLOWS_BUCKET = "geoglows-v2-forecast-products"
+GEOGLOWS_REGION = "us-west-2"
+GEOGLOWS_PREFIX = "map-tables/"
+
+# Which of the two products in each cycle folder to download.
+#
+#   "csv"      one global file per 3-hourly step, ~119 MB each, no coordinates
+#   "parquet"  ~161 per-VPU files, ~1.7 GB, carrying every step of the horizon
+#
+# CSV while GEOGLOWS_FORECAST_HOUR names a single step, because one step is one
+# file and the parquets would be fourteen times the bytes for the same answer.
+# The moment the policy becomes a maximum over a window, parquet is both cheaper
+# and the only option — ~1.7 GB against ~9.6 GB of CSVs for the full horizon — and
+# the reader already handles both, so this is the only line that changes.
+GEOGLOWS_PRODUCT = "csv"
 FLOOD_HUB_SEVERITY = {"ABOVE_NORMAL": "warning", "SEVERE": "danger", "EXTREME": "extreme"}
 GLOFAS_SEVERITY = {1: "warning", 2: "danger", 3: "extreme"}
 GLOFAS_RETURN_PERIOD = {1: 2, 2: 5, 3: 20}
@@ -391,6 +461,24 @@ CELLS_TILES_URL = "pmtiles:///backend/static/tiles/cells.pmtiles"
 # tile with no way to tell them apart.
 CELLS_SOURCE_LAYER = "cells_r{res}"
 CELLS_PROMOTE_ID = "h3_id"        # feature-state (hover/selection) needs a stable id
+
+
+def current_input(input_dir=None):
+    """The input folder step 2 should read: what step 1 last fetched, else the
+    flat input directory itself."""
+    root = input_dir or INPUT_DIR
+    try:
+        with open(os.path.join(root, INPUT_POINTER), encoding="utf-8") as f:
+            name = f.read().strip()
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name):
+            path = os.path.join(root, name)
+            if os.path.isdir(path):
+                return path
+            print(f"  note: {INPUT_POINTER} names {name}, which does not exist "
+                  f"— using {root}")
+    except OSError:
+        pass
+    return root
 
 
 def release_pointer(output_dir=None):

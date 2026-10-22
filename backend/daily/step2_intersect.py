@@ -394,7 +394,7 @@ def derive_release(input_dir, records):
 
 
 def main(input_dir=None, output_dir=None, release=None, staging=False):
-    input_dir = input_dir or C.INPUT_DIR
+    input_dir = input_dir or C.current_input()
     if not os.path.isdir(input_dir):
         sys.exit(f"Input folder not found: {input_dir}")
     print(f"Input: {input_dir}\n")
