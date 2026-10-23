@@ -59,6 +59,24 @@ CROSSWALK_ID_COL = "river_id"
 # coordinate alone, so without this every GEOGLOWS forecast loses its district.
 REACH_POINTS = os.path.join(BACKEND, "static", "reach_points_v2.parquet")
 
+# ---- the clock -------------------------------------------------------------
+# EVERYTHING IN THIS PIPELINE IS UTC. Not a preference — the models leave no
+# choice. Flood Hub stamps its times with a Z, and GEOGLOWS and GloFAS name their
+# cycles 00Z in a filename with no timezone recorded anywhere else, so the only
+# clock all four agree on is UTC.
+#
+# That means time.gmtime(), never time.localtime(), and a Z on anything written
+# with an hour in it. The rule exists because mixing them is invisible: a run.json
+# once carried `generated: ...T16:52:27Z` beside `file_mtime: ...T10:45:40`, six
+# hours apart with nothing to say which clock either used.
+#
+# It also means a date derived from a file's mtime is a UTC date. In US Mountain
+# time those differ for any file written between 00:00 and 06:00 UTC — which is
+# precisely when the GEOGLOWS cycle lands.
+#
+# The script's log files are named with `date -u` for the same reason, so an
+# evening run lands in the next day's log. That is correct, not a bug.
+
 # ---- running daily against live data ---------------------------------------
 # A live feed fails differently from an archive. An archive is absent or complete;
 # a feed is late, truncated, empty, or yesterday's file left in place. The rules
@@ -204,6 +222,92 @@ GEOGLOWS_PREFIX = "map-tables/"
 # and the only option — ~1.7 GB against ~9.6 GB of CSVs for the full horizon — and
 # the reader already handles both, so this is the only line that changes.
 GEOGLOWS_PRODUCT = "csv"
+
+# ---- where the Flood Hub forecast comes from -------------------------------
+# An authenticated API rather than a bucket, which changes two things.
+#
+# IT IS NOT REPRODUCIBLE. searchLatestFloodStatus returns current state; there is
+# no cycle, no archive, and no way to ask what it said yesterday. GEOGLOWS keeps
+# ~110 cycles in its bucket, so a missed morning there is an inconvenience. Here
+# a missed morning is gone. The files this writes are the only copy that will
+# ever exist, which is why input/<date>/ is an archive for this model even though
+# it is scratch space for GEOGLOWS.
+#
+# AND IT CAN FAIL BY HALVES. A bucket download arrives or does not, and the byte
+# count catches the middle. A sweep over 248 countries can return 218 of them and
+# exit cleanly, leaving a well-formed CSV that is quietly missing a continent.
+# So the regions that error are counted and gate the result (below) instead of
+# being printed and forgotten.
+FLOOD_HUB_BASE = "https://floodforecasting.googleapis.com/v1"
+FLOOD_HUB_KEY_ENV = "FLOODS_API_KEY" # RILEY'S API KEY
+COUNTRY_CODES = os.path.join(BACKEND, "static", "country_codes.csv")
+
+# Severities that count as "this gauge has a warning", and so earn the extra
+# round trips that fetch discharge, peak timing and return period.
+FLOOD_HUB_WARNING_SEVERITIES = ("ABOVE_NORMAL", "SEVERE", "EXTREME")
+FLOOD_HUB_DISCHARGE_UNIT = "CUBIC_METERS_PER_SECOND"   # metre-stage gauges are skipped
+FLOOD_HUB_MODEL_BUCKET = 50        # gaugeModels:batchGet ids per call
+FLOOD_HUB_FORECAST_BUCKET = 500    # queryGaugeForecasts ids per call
+
+# A gauge's discharge thresholds ARE its return periods. Checked highest first.
+FLOOD_HUB_THRESHOLD_YEARS = [("extremeDangerLevel", 20), ("dangerLevel", 5),
+                             ("warningLevel", 2)]
+
+# How much of the world may fail before the sweep is not to be trusted. Marked
+# thin rather than dropped: the countries that answered returned real gauges, and
+# throwing those away over a partial outage is worse than publishing with a note.
+FLOOD_HUB_MAX_REGION_FAILURE_RATE = 0.05
+
+# Which flash-flood polygons to fetch, and what the pipeline calls them. The
+# names on the right are what read_flash and FLASH_SEVERITY key on.
+FLASH_POLYGON_TYPES = [("likely", "likelyAffectedPolygonId"),
+                       ("highly_likely", "highlyLikelyAffectedPolygonId")]
+
+# Caches for the two things that are static but arrive with the daily feed.
+# A gauge's thresholds are a property of the gauge; a flash polygon is a fixed
+# ~20km urban cell. Re-downloading either every morning is the same mistake as
+# re-downloading a reach's coordinates was.
+FLOOD_HUB_MODEL_CACHE = os.path.join(BACKEND, "static", "flood_hub_gauge_models.json")
+FLASH_POLYGON_CACHE = os.path.join(BACKEND, "static", "flash_polygons.json")
+
+# ---- where the GloFAS forecast comes from -----------------------------------
+# ECMWF's Auxiliary Data Store, over HTTPS rather than the FTP the CEMS wiki
+# leads with — which means this fetch is shaped like the GEOGLOWS one (list a
+# day, take some files) rather than like the Flood Hub one.
+#
+# Credentials are sent as HTTP Basic, so they travel in a header and NOT in the
+# URL. That is the opposite of Flood Hub and it is why this module may safely
+# print the URL it tried: a logged ECPDS URL gives nothing away, and saying
+# exactly what was attempted is the difference between a fixable 404 and a
+# mystery.
+#
+# Retention is 15 days, so like Flood Hub this is a feed whose past cannot be
+# re-fetched. What lands in input/<date>/ is the only copy.
+#
+# The cycle folder is dated and the filenames inside it are fully determined by
+# the stamp, so the newest cycle is found by PROBING for one file rather than by
+# parsing the listing's HTML. Fewer moving parts, and it survives a redesign of
+# their web interface.
+ECPDS_BASE = "https://aux.ecmwf.int/ecpds/data"
+ECPDS_PRODGEN = "prodgen"
+ECPDS_USER_ENV = "ECPDS_USER"
+ECPDS_PASSWORD_ENV = "ECPDS_PASSWORD"
+ECPDS_LOOKBACK_DAYS = 4        # how far back to probe before giving up
+
+# The eight objects a cycle owes us. The three sumAL grids are the alert levels
+# models.py reads together — a missing one drops GloFAS rather than understating
+# it — and the RPG_U set is one shapefile in five parts.
+GLOFAS_FILES = [
+    "sumAL_medium_AL_{stamp}.nc",
+    "sumAL_high_AL_{stamp}.nc",
+    "sumAL_extreme_AL_{stamp}.nc",
+    "RPG_U{stamp}.shp",
+    "RPG_U{stamp}.shx",
+    "RPG_U{stamp}.dbf",
+    "RPG_U{stamp}.prj",
+    "RPG_U{stamp}.qix",
+]
+GLOFAS_PROBE_FILE = "sumAL_medium_AL_{stamp}.nc"   # the one that decides a cycle exists
 FLOOD_HUB_SEVERITY = {"ABOVE_NORMAL": "warning", "SEVERE": "danger", "EXTREME": "extreme"}
 GLOFAS_SEVERITY = {1: "warning", 2: "danger", 3: "extreme"}
 GLOFAS_RETURN_PERIOD = {1: 2, 2: 5, 3: 20}

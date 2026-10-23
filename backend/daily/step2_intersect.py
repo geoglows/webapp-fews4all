@@ -76,7 +76,7 @@ def model_date(records, path):
     if dates:
         return dates.most_common(1)[0][0], "issued_time"
     try:
-        return time.strftime("%Y-%m-%d", time.localtime(os.path.getmtime(path))), "file mtime"
+        return time.strftime("%Y-%m-%d", time.gmtime(os.path.getmtime(path))), "file mtime"
     except OSError:
         return "", "unknown"
 
@@ -122,7 +122,7 @@ def load_all(input_dir, output_dir=None):
         row["file"] = os.path.basename(path)
         try:
             row["file_mtime"] = time.strftime(
-                "%Y-%m-%dT%H:%M:%S", time.localtime(os.path.getmtime(path)))
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(os.path.getmtime(path)))
         except OSError:
             pass
 
@@ -203,7 +203,7 @@ def apply_guards(by_model, status, release=None, output_dir=None):
     stated = {m: d for m, d in dated.items()
               if status[m].get("issued_from") == "issued_time"}
     newest = max(stated.values()) if stated else (max(dated.values()) if dated else None)
-    release = release or newest or time.strftime("%Y-%m-%d")
+    release = release or newest or time.strftime("%Y-%m-%d", time.gmtime())
 
     dropped = []
     for model, r in status.items():
@@ -239,7 +239,7 @@ def apply_guards(by_model, status, release=None, output_dir=None):
                   f"— kept with a warning", file=sys.stderr)
 
     # Age of the release itself, relative to the day it is being built.
-    gap = _days_between(release, time.strftime("%Y-%m-%d"))
+    gap = _days_between(release, time.strftime("%Y-%m-%d", time.gmtime()))
     if gap is not None and gap > C.RELEASE_MAX_AGE_DAYS:
         print(f"  note: this release is dated {release}, {gap} day(s) ago — "
               f"rerunning an archive, or no model delivered today's file",

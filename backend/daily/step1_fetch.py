@@ -50,6 +50,8 @@ from concurrent.futures import ThreadPoolExecutor
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from common import config as C          # noqa: E402
+from common import floodhub as FH       # noqa: E402
+from common import ecpds as EC          # noqa: E402
 
 S3_NS = "{http://s3.amazonaws.com/doc/2006-03-01/}"
 FETCH_RECORD = "fetch.json"
@@ -219,6 +221,133 @@ def fetch_all(plan, dest_dir, cycle):
     return done, failed
 
 
+# ---- Flood Hub --------------------------------------------------------------
+
+def fetch_flood_hub(dest, record, refresh=False):
+    """The two Flood Hub products, each recorded on its own.
+
+    Separate entries because they are separate models downstream: a flash polygon
+    endpoint having a bad morning must not take the river gauges with it.
+    """
+    key = FH.key_from_env()
+    for model in ("flood_hub", "flash"):
+        record["models"][model] = {"status": C.MODEL_SKIPPED, "notes": []}
+    if not key:
+        for model in ("flood_hub", "flash"):
+            record["models"][model]["notes"].append(
+                f"no {C.FLOOD_HUB_KEY_ENV} in the environment")
+        print(f"  flood_hub  no {C.FLOOD_HUB_KEY_ENV} set — skipped")
+        print(f"  flash      no {C.FLOOD_HUB_KEY_ENV} set — skipped")
+        return
+
+    codes, names = FH.region_codes()
+
+    # ---- river gauges ------------------------------------------------------
+    row = record["models"]["flood_hub"]
+    try:
+        t0 = time.time()
+        statuses, failed, checkpoints = FH.sweep_gauges(key, dest, names, codes)
+        rate = len(failed) / max(1, len(codes))
+        enrich, stats = FH.enrich_warned(statuses, key, refresh_models=refresh)
+        n = FH.write_gauge_csv(statuses, enrich, stats.get("units") or {},
+                               os.path.join(dest, "world_flood_status.csv"))
+        row.update({"status": C.MODEL_OK, "gauges": n,
+                    "regions_queried": len(codes), "regions_failed": len(failed),
+                    "warned": stats.get("warned", 0),
+                    "enriched": stats.get("enriched", 0),
+                    "models_fetched": stats.get("models_fetched", 0)})
+        if failed:
+            row["failed_regions"] = sorted(failed)
+            row["notes"].append(
+                f"{len(failed)} of {len(codes)} region(s) returned an error: "
+                + ", ".join(sorted(failed)[:12])
+                + (" ..." if len(failed) > 12 else ""))
+        if rate > C.FLOOD_HUB_MAX_REGION_FAILURE_RATE:
+            # The CSV is well-formed and parses; it is simply missing part of the
+            # world, which reads downstream as "no floods there". Thin rather than
+            # dropped — what did answer is real.
+            row["status"] = C.MODEL_THIN
+            row["notes"].append(
+                f"{rate:.0%} of regions failed, over the "
+                f"{C.FLOOD_HUB_MAX_REGION_FAILURE_RATE:.0%} tolerance — this "
+                f"table is missing part of the world")
+            print(f"  flood_hub  THIN: {len(failed)}/{len(codes)} regions failed",
+                  file=sys.stderr)
+        for path in checkpoints:                 # only once the CSV is written
+            if os.path.exists(path):
+                os.remove(path)
+        print(f"  flood_hub  {n:,} gauge(s), {stats.get('warned', 0)} warned, "
+              f"{stats.get('enriched', 0)} enriched, {len(failed)} region(s) "
+              f"failed  ({time.time() - t0:.0f}s)")
+    except Exception as e:
+        row["status"] = C.MODEL_DROPPED
+        row["notes"].append(f"{type(e).__name__}: {FH._redact(e)}")
+        print(f"  flood_hub  FAILED: {FH._redact(e)}", file=sys.stderr)
+
+    # ---- urban flash floods ------------------------------------------------
+    row = record["models"]["flash"]
+    try:
+        t0 = time.time()
+        events = FH.search_flash(key)
+        # Only the ids that exist. Not every event has both polygon types — in
+        # one real cycle, 113 events carried a `likely` polygon and 11 a
+        # `highly_likely` one — so an unfiltered comprehension puts a single None
+        # in the set and quietly inflates the cache-hit count by one.
+        ids = {pid for _t, field in C.FLASH_POLYGON_TYPES for ev in events
+               for pid in [ev.get(field)] if isinstance(pid, str) and pid}
+        geoms, fetched, bad = FH.polygon_geometries(ids, key, refresh=refresh)
+        n = FH.write_flash_geojson(events, geoms, names,
+                                   os.path.join(dest, "urban_flash_floods.geojson"))
+        row.update({"status": C.MODEL_OK, "events": len(events), "polygons": n,
+                    "polygons_fetched": fetched,
+                    "polygons_cached": max(0, len(ids) - fetched)})
+        if bad:
+            row["notes"].append(f"{len(bad)} polygon(s) had no usable geometry")
+        if events and not n:
+            row["status"] = C.MODEL_THIN
+            row["notes"].append(
+                f"{len(events)} event(s) but no polygon resolved to geometry")
+        print(f"  flash      {len(events)} event(s) -> {n} polygon(s), "
+              f"{fetched} fetched / {max(0, len(ids) - fetched)} from cache "
+              f"({time.time() - t0:.0f}s)")
+    except Exception as e:
+        row["status"] = C.MODEL_DROPPED
+        row["notes"].append(f"{type(e).__name__}: {FH._redact(e)}")
+        print(f"  flash      FAILED: {FH._redact(e)}", file=sys.stderr)
+
+
+# ---- GloFAS -----------------------------------------------------------------
+
+def fetch_glofas(dest, record):
+    """One cycle from ECPDS, all eight files or none.
+
+    All-or-nothing on purpose: the three sumAL grids are alert LEVELS and they
+    nest, so a cycle missing one would publish every extreme pixel a severity too
+    low. models.py already refuses that; catching it here means GloFAS is marked
+    dropped with a reason rather than discovered halfway through step 2.
+    """
+    row = {"status": C.MODEL_SKIPPED, "notes": []}
+    record["models"]["glofas"] = row
+
+    user, password = EC.credentials()
+    if not (user and password):
+        row["notes"].append(f"no {C.ECPDS_USER_ENV}/{C.ECPDS_PASSWORD_ENV} "
+                            f"in the environment")
+        print(f"  glofas     no {C.ECPDS_USER_ENV}/{C.ECPDS_PASSWORD_ENV} set "
+              f"— skipped")
+        return
+    try:
+        row.update(EC.fetch(dest, user, password))
+        row["status"] = C.MODEL_OK
+    except Exception as e:
+        row["status"] = C.MODEL_DROPPED
+        row["notes"].append(str(e))
+        # The URL is in the message on purpose: Basic auth keeps the credential
+        # in a header, so saying what was tried costs nothing and is the only
+        # way to tell a wrong path from a wrong password.
+        print(f"  glofas     FAILED: {e}", file=sys.stderr)
+
+
 # ---- the run ----------------------------------------------------------------
 
 def write_pointer(release, root=None):
@@ -233,7 +362,8 @@ def write_pointer(release, root=None):
     return p
 
 
-def main(cycle=None, product=None, dry_run=False, input_root=None):
+def main(cycle=None, product=None, dry_run=False, input_root=None,
+         refresh=False):
     t0 = time.time()
     product = (product or C.GEOGLOWS_PRODUCT).lower()
     root = input_root or C.INPUT_DIR
@@ -291,15 +421,11 @@ def main(cycle=None, product=None, dry_run=False, input_root=None):
         row["notes"].append(f"{type(e).__name__}: {e}")
         print(f"  geoglows   FAILED: {e}", file=sys.stderr)
 
-    # The other three are not automated yet. Said out loud rather than left to be
-    # noticed, because a release missing them is a different thing from a release
-    # that chose to leave them out.
-    for model in ("flood_hub", "glofas", "flash"):
-        record["models"][model] = {
-            "status": C.MODEL_SKIPPED,
-            "notes": ["not automated yet; place the file in the folder by hand"],
-        }
-        print(f"  {model:<10} not automated yet — place its file in {dest}")
+    if not dry_run:
+        fetch_flood_hub(dest, record, refresh=refresh)
+
+    if not dry_run:
+        fetch_glofas(dest, record)
 
     os.makedirs(dest, exist_ok=True)
     tmp = os.path.join(dest, FETCH_RECORD + ".tmp")
@@ -308,11 +434,13 @@ def main(cycle=None, product=None, dry_run=False, input_root=None):
         f.write("\n")
     os.replace(tmp, os.path.join(dest, FETCH_RECORD))
 
-    if record["models"]["geoglows"]["status"] == C.MODEL_OK:
+    landed = [m for m, r in record["models"].items()
+              if r["status"] in (C.MODEL_OK, C.MODEL_THIN)]
+    if landed:
         write_pointer(release, root)
         print(f"\n{INPUT_POINTER} -> {release}")
     else:
-        print(f"\n{INPUT_POINTER} left alone — geoglows did not land cleanly",
+        print(f"\n{INPUT_POINTER} left alone — no model landed cleanly",
               file=sys.stderr)
 
     print(f"Done in {time.time() - t0:.0f}s")
@@ -323,4 +451,5 @@ if __name__ == "__main__":
     a = sys.argv[1:]
     main(cycle=a[a.index("--cycle") + 1] if "--cycle" in a else None,
          product=a[a.index("--product") + 1] if "--product" in a else None,
-         dry_run="--dry-run" in a)
+         dry_run="--dry-run" in a,
+         refresh="--refresh" in a)

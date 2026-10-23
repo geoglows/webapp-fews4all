@@ -77,11 +77,14 @@ def find_input(model, input_dir=None):
     The fallback is deliberately one level and only to the configured input root,
     so it can never wander into a different day's folder.
     """
+    # Compared as absolute paths. normpath alone leaves a relative --input
+    # looking nothing like the absolute INPUT_DIR, so the fallback silently never
+    # fired and a hand-placed model read as missing.
     root = input_dir or C.current_input()
     places = [root]
-    parent = os.path.dirname(os.path.normpath(root))
-    if os.path.normpath(root) != os.path.normpath(C.INPUT_DIR) and \
-            os.path.normpath(parent) == os.path.normpath(C.INPUT_DIR):
+    here = os.path.abspath(root)
+    base = os.path.abspath(C.INPUT_DIR)
+    if here != base and os.path.dirname(here) == base:
         places.append(C.INPUT_DIR)
 
     for place in places:

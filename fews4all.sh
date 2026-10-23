@@ -46,8 +46,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # it references must already exist. Set it afterwards and "$FEWS_ROOT/logs"
 # quietly becomes "/logs", at the root of the disk.
 FEWS_ROOT="$SCRIPT_DIR"
+# `set -a` marks everything defined while it is on for EXPORT. Without it the
+# settings would be plain shell variables, visible to this script and invisible
+# to the python it runs — which is how FLOODS_API_KEY would reach the Flood Hub
+# fetcher as an empty string and the model would simply be skipped.
+set -a
 # shellcheck source=variables.env.example
 source "$SCRIPT_DIR/variables.env"
+set +a
 # ...and defaulted again, in case the settings file blanked it.
 FEWS_ROOT="${FEWS_ROOT:-$SCRIPT_DIR}"
 LOG_DIR="${LOG_DIR:-$FEWS_ROOT/logs}"
