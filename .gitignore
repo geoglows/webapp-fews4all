@@ -31,5 +31,27 @@ vgrid/
 Software/
 Other/
 .gitignore
-flood_points.json
-flood_state.json
+public/
+backend/input
+backend/output
+
+# Built static tables and tile archives. All of them are generated from source
+# data that lives outside the repo (Files/ is ignored too), so they are
+# reproducible rather than authored — and large: ~350 MB of CSV and several GB
+# of tiles. Rebuild with the scripts in backend/static/.
+backend/static/tiles
+backend/static/cell_impact_r6.csv
+backend/static/stream_attrs.csv
+backend/static/hydrorivers_topology.csv
+backend/static/h3_hydrorivers_r6.csv
+backend/static/cell_universe_land_r6.part.csv
+backend/static/cell_universe_land_r6.done.csv
+backend/static/reach_points_v2.parquet
+
+
+
+# Local settings for fews4all.sh; may hold API keys.
+variables.env
+.fews4all.lock
+backend/static/flood_hub_gauge_models.json
+backend/static/flash_polygons.json
