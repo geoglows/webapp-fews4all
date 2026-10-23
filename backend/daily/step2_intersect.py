@@ -266,15 +266,22 @@ def match_points(records):
 def write_areas(records, path):
     """The ungridded footprints, as a FeatureCollection keyed by forecast_uid.
 
-    Only the join key goes in the properties. Every other attribute already lives
-    in forecasts.csv, and duplicating it here would create a second copy to drift.
+    Almost nothing goes in the properties: every attribute a reader needs is in
+    forecasts.csv under the same forecast_uid, and copying it here would make a
+    second version to drift from the first.
+
+    `polygon_type` is the exception, because it is the one thing forecasts.csv
+    cannot give back. It is what the map FILTERS and STYLES on — likely against
+    highly-likely — and the forecast table only keeps the severity it maps to, so
+    deriving it back would mean inverting FLASH_SEVERITY in the browser.
     """
     import json
     feats = [{
         "type": "Feature",
         "geometry": r["_geometry"],
         "properties": {"forecast_uid": r["forecast_uid"], "model": r["model"],
-                       "severity": r["severity"]},
+                       "severity": r["severity"],
+                       "polygon_type": r.get("_polygon_type", "")},
     } for r in records if r.get("_geometry")]
     size = write_text(path, json.dumps({"type": "FeatureCollection",
                                         "features": feats}))

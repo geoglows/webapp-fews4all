@@ -121,6 +121,7 @@ map.once("load", () => {
     .then((release) => {
       cells.build(release);
       heat.build(release);
+      flash.build(release);
       // The controls were mounted before this resolved, so they are still showing
       // the app's built-in defaults. Restate them now that the release has said
       // which palettes exist and which one each model opens on.

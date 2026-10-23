@@ -1,16 +1,11 @@
 // Central source hub for FEWS4All data files.
 //
-// Every GeoJSON the map loads is named here, in one place, so there is a single
-// spot to repoint the app if the data ever moves. The files currently live in
-// the `public/` folder, which Vite serves from the site root; using
-// import.meta.env.BASE_URL resolves them correctly in dev and in production,
-// even if the site is later served from a subpath (e.g. /fews4all/).
+// Where the app's data lives, in one place, so there is a single spot to repoint
+// it if the data ever moves.
 //
-// To point the app at a different origin - for example back to a cloud CDN -
-// change BASE to that URL (keep the trailing slash) and every entry below
-// follows automatically. To move a single file, edit just its line.
-
-const BASE = import.meta.env.BASE_URL; // public/ -> served from the site root
+// Everything now comes from one release folder under OUTPUT_BASE. To serve from
+// a different origin — an S3 bucket, a CDN — change OUTPUT_BASE to that URL and
+// every file follows, because they are all addressed relative to it.
 
 // One forecast release's delivered tables. The path is the dev-server one — Vite
 // serves the project root, so backend/output resolves while `npm run dev` is
@@ -45,10 +40,12 @@ export async function resolveRelease() {
   return {release, base: OUTPUT_BASE + release + "/"};
 }
 
-// One entry, because one file is still fetched from here. The cells, the basins,
-// the stream network and the ADM boundaries all used to be whole-world GeoJSON
-// downloads; they are vector tile archives now, or retired outright, and their
-// files are in Other/retired/.
-export const DATA = {
-  flash: BASE + "data_flash_floods.geojson",
-};
+// Nothing is fetched from public/ any more. The flash polygons used to be a
+// static data_flash_floods.geojson shipped with the site, which is exactly how
+// they came to be frozen on 23 September while the pipeline published fresh ones
+// into every release and nothing read them. They now come from the release like
+// everything else: RELEASE_BASE + "flash_areas.geojson".
+//
+// The cells, the basins, the stream network and the ADM boundaries all used to be
+// whole-world GeoJSON downloads too; they are vector tile archives now, or
+// retired outright, and their files are in Other/retired/.

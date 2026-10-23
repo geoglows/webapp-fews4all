@@ -684,6 +684,9 @@ def read_flash(path):
             continue
         issued = _s(props.get("forecastIssueTime"))
         r = blank_record()
+        # Private, like _geometry: not a FORECAST_COLUMN, so it never reaches the
+        # forecast table — it rides to the areas sidecar, which is what styles on it.
+        r["_polygon_type"] = _s(props.get("polygon_type")).lower()
         r.update({
             "model": "flash", "severity": sev,
             "native_id": _s(props.get("polygonId")) or _s(props.get("event_index")),

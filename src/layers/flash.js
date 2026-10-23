@@ -1,6 +1,7 @@
-// The Flood Hub flash-flood overlay (public/data_flash_floods.geojson): a global
-// layer, independent of the flagged-area dataset.
-import {DATA} from "../sources.js";
+// The Flood Hub flash-flood overlay, from the release the app is drawing.
+// It used to come from a static file in public/, which is why it showed the
+// same September polygons no matter what the pipeline published.
+
 import {EMPHASIS, FLASH_FILL_LAYERS, FLASH_LAYERS, FLASH_SRC, FLASH_TIER, FLASH_TIERS, FLASH_TIER_LAYERS, hoverFill, selectedFill, stateOn} from "../config.js";
 import {applyLayerOrder, map, registerPointerSource, registerTooltipLayers} from "../map.js";
 import {boundsNear, boundsOf} from "../geometry.js";
@@ -14,6 +15,10 @@ import {rerenderPanel, setFlashProps} from "../panel.js";
 let flashOn = false;
 let flashData = null;
 let flashLoading = false;
+// The release's own flash file, and its forecast table. Both are set by build()
+// before any of this can be switched on.
+let flashUrl = null;
+let forecastsByUid = null;
 
 // The flash polygon the user last clicked (null = standby). Its properties fill
 // the Flood Hub tile, just as a selected basin fills the river tiles. The id is
@@ -27,13 +32,51 @@ let hoveredFlashId = null;
 
 // ---- Flood Hub flash-flood polygons (global overlay) ----------------------
 
+/* The release hands over its flash file and its forecast table.
+ *
+ * Called from main.js once the release resolves, before the overlay can be
+ * switched on — so a user who toggles flash before then simply gets nothing
+ * rather than a stale file from somewhere else. */
+export function build(release) {
+  flashUrl = release.flashUrl || null;
+  forecastsByUid = release.forecasts || null;
+  flashData = null;                 // a new release means new polygons
+}
+
+/* Put the forecast row's fields onto the feature, under the names the panel and
+ * the format helpers already use.
+ *
+ * The sidecar carries geometry, the join key and polygon_type; everything else
+ * — when it was issued, how long the window runs, which country and district —
+ * lives once in forecasts.csv. Merging here means panel.js and format.js never
+ * learn that the data moved. */
+function enrich(feature) {
+  const p = feature.properties || (feature.properties = {});
+  const row = forecastsByUid && forecastsByUid.get(p.forecast_uid);
+  if (!row) return feature;
+  p.polygonId = row.native_id || p.forecast_uid;
+  p.forecastIssueTime = row.issued_time || "";
+  p.district = row.district || "";
+  p.countries = row.country ? [row.country] : [];
+  const start = Date.parse(row.start_time);
+  const end = Date.parse(row.end_time);
+  if (isFinite(start) && isFinite(end) && end > start) {
+    p.forecastPeriodHours = Math.round((end - start) / 3.6e6);
+  }
+  return feature;
+}
+
 function loadFlash(cb) {
   if (flashData) return cb(flashData);
   if (flashLoading) return;
+  if (!flashUrl) { console.warn("flash floods: no release loaded yet"); return cb(null); }
   flashLoading = true;
-  fetch(DATA.flash)
+  fetch(flashUrl)
     .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
-    .then((data) => { flashData = data; flashLoading = false; cb(data); })
+    .then((data) => {
+      (data.features || []).forEach(enrich);
+      flashData = data; flashLoading = false; cb(data);
+    })
     .catch((err) => { flashLoading = false; console.warn("flash floods:", err.message); cb(null); });
 }
 
@@ -42,9 +85,11 @@ function loadFlash(cb) {
 // at whatever weight Display Options has them set to.
 function ensureFlashLayers() {
   if (map.getSource(FLASH_SRC) || !flashData) return;
-  // promoteId makes each polygon's `polygonId` its feature id, so a clicked
+  // promoteId makes each polygon's `forecast_uid` its feature id, so a clicked
   // polygon can carry a `selected` feature-state (white outline) like a basin.
-  map.addSource(FLASH_SRC, {type: "geojson", data: flashData, promoteId: "polygonId"});
+  // The uid rather than the polygonId: step 2 guarantees the uid is unique, while
+  // two features sharing a polygon would collide into one selectable shape.
+  map.addSource(FLASH_SRC, {type: "geojson", data: flashData, promoteId: "forecast_uid"});
   // Added likely group first, then highly_likely, so highly_likely sits on top.
   map.addLayer({
     id: "flash-fill-likely", type: "fill", source: FLASH_SRC,
@@ -179,7 +224,7 @@ function bindFlashInteractions() {
       // Called with an empty list when nothing is under the cursor, which is what
       // clears the previous polygon — the same contract the cells rely on.
       const hit = hits[0];
-      setFlashHover(hit ? hit.properties.polygonId : null);
+      setFlashHover(hit ? hit.properties.forecast_uid : null);
       return hit ? flashTooltipHtml(hit.properties) : "";
     },
     click(hits, _e, ctx) {
@@ -194,7 +239,7 @@ function bindFlashInteractions() {
       // Prefer the full source geometry: rendered features are clipped at tile
       // edges, so framing from one would cut the polygon off.
       const src = flashData && flashData.features.find(
-        (x) => x.properties.polygonId === hit.properties.polygonId);
+        (x) => x.properties.forecast_uid === hit.properties.forecast_uid);
       // Frame the polygon only when nothing else claimed the view. A flash
       // polygon is far larger than a hexagon, so fitting it zooms out — over a
       // flagged cell that would undo the drill and leave the cell unreachable.
@@ -209,7 +254,7 @@ function bindFlashInteractions() {
         }
       }
       selectedFlash = (src || hit).properties;   // fill the Flood Hub tile
-      setFlashSelected(selectedFlash.polygonId);  // light up the polygon on the map
+      setFlashSelected(selectedFlash.forecast_uid);  // light up the polygon on the map
       setFlashProps(selectedFlash);               // hand it to the panel to render
       rerenderPanel();
       return {panel: true, camera};
@@ -220,25 +265,25 @@ function bindFlashInteractions() {
 // Carry the `hover` feature-state on the polygon under the cursor, clearing it
 // from the last one. Pass null to clear. Guards on sameness because this runs on
 // every mousemove.
-function setFlashHover(polygonId) {
-  if (hoveredFlashId === polygonId) return;
-  if (!map.getSource(FLASH_SRC)) { hoveredFlashId = polygonId; return; }
+function setFlashHover(uid) {
+  if (hoveredFlashId === uid) return;
+  if (!map.getSource(FLASH_SRC)) { hoveredFlashId = uid; return; }
   if (hoveredFlashId != null)
     map.setFeatureState({source: FLASH_SRC, id: hoveredFlashId}, {hover: false});
-  hoveredFlashId = polygonId;
-  if (polygonId != null)
-    map.setFeatureState({source: FLASH_SRC, id: polygonId}, {hover: true});
+  hoveredFlashId = uid;
+  if (uid != null)
+    map.setFeatureState({source: FLASH_SRC, id: uid}, {hover: true});
 }
 
 // Carry the `selected` feature-state on the clicked flash polygon (white
 // outline), clearing it from the previously selected one. Pass null to clear.
-export function setFlashSelected(polygonId) {
-  if (!map.getSource(FLASH_SRC)) { selectedFlashId = polygonId; return; }
+export function setFlashSelected(uid) {
+  if (!map.getSource(FLASH_SRC)) { selectedFlashId = uid; return; }
   if (selectedFlashId != null)
     map.setFeatureState({source: FLASH_SRC, id: selectedFlashId}, {selected: false});
-  selectedFlashId = polygonId;
-  if (polygonId != null)
-    map.setFeatureState({source: FLASH_SRC, id: polygonId}, {selected: true});
+  selectedFlashId = uid;
+  if (uid != null)
+    map.setFeatureState({source: FLASH_SRC, id: uid}, {selected: true});
 }
 
 // Back to standby: clicking the basemap closes the flash tile as well as the cell

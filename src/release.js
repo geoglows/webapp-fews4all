@@ -261,5 +261,8 @@ export async function loadRelease(base) {
   };
   const release = buildRelease(style, cellsText, forecastsText, rollupText);
   release.run = await loadRun(root);
+  // The flash polygons are fetched lazily, only if the overlay is switched on,
+  // so the release carries the address rather than the file.
+  release.flashUrl = root + "flash_areas.geojson";
   return release;
 }
