@@ -1,0 +1,39 @@
+# The environment the pipeline needs, and nothing else.
+#
+#     conda env create -f environment.yml
+#     conda activate fews4all
+#
+# Deliberately minimal rather than an export of a working machine. A full
+# `conda env export` pins 240 packages to one platform's builds, most of them
+# transitive, and a third of them belong to Jupyter rather than to this pipeline.
+# What is listed here is what `backend/` actually imports, so the solver is free
+# to pick builds that suit whatever machine this is created on.
+#
+# No versions are pinned except Python. Nothing here depends on a particular
+# release, and pinning would mean this file silently rotting until someone
+# notices it will no longer solve. If a future version does break something,
+# pin that one package and say why.
+#
+# NOT included, because the pipeline does not import them: duckdb, gdal,
+# ipykernel, ipyleaflet, rioxarray, s3fs, matplotlib. Add them back if you also
+# want to run the notebooks in Other/ on this machine.
+name: fews4all
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  # reading and writing the tables and grids
+  - numpy
+  - pandas
+  - pyarrow          # the GEOGLOWS map-tables and the reach-points lookup
+  - netcdf4          # the GloFAS sumAL alert grids
+  # geometry: the admin lookup, the flash footprints, the reporting points
+  - geopandas
+  - shapely
+  - pyogrio
+  - pip
+  - pip:
+      # h3 has no conda-forge package for python 3.13 in this stack; it is the
+      # grid the whole app is built on, so it is listed explicitly rather than
+      # left to arrive as somebody's dependency.
+      - h3>=4
