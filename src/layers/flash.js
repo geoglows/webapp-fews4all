@@ -41,6 +41,19 @@ export function build(release) {
   flashUrl = release.flashUrl || null;
   forecastsByUid = release.forecasts || null;
   flashData = null;                 // a new release means new polygons
+
+  // A polygon selected on one day does not exist on another, so the panel tile
+  // and the map highlight are stood down rather than left pointing at a feature
+  // that is no longer there.
+  clearFlashSelection();
+  selectedFlash = null;
+  setFlashProps(null);
+  if (map.getSource(FLASH_SRC)) {
+    map.getSource(FLASH_SRC).setData({type: "FeatureCollection", features: []});
+  }
+  // Already showing? Then fetch the new day's polygons straight away rather than
+  // waiting for the user to toggle the overlay off and on again.
+  if (flashOn) setFlashOn(true);
 }
 
 /* Put the forecast row's fields onto the feature, under the names the panel and
@@ -84,7 +97,12 @@ function loadFlash(cb) {
 // (magenta). "highly_likely" = darker fill, "likely" = lighter; both solid-outlined
 // at whatever weight Display Options has them set to.
 function ensureFlashLayers() {
-  if (map.getSource(FLASH_SRC) || !flashData) return;
+  if (!flashData) return;
+  // On a release swap the source already exists and must be given the new day's
+  // polygons. Returning early here — as this did — left yesterday's footprints
+  // on the map with today's date in the header.
+  const existing = map.getSource(FLASH_SRC);
+  if (existing) { existing.setData(flashData); return; }
   // promoteId makes each polygon's `forecast_uid` its feature id, so a clicked
   // polygon can carry a `selected` feature-state (white outline) like a basin.
   // The uid rather than the polygonId: step 2 guarantees the uid is unique, while

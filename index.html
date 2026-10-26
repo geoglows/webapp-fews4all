@@ -29,8 +29,20 @@
   </header>
 
   <main class="flex flex-1 min-h-0" id="main">
-    <!-- Placeholder tint behind the tiles; light, to match the default base map. -->
-    <div class="flex-1 h-full bg-slate-200" id="map"></div>
+    <!-- The map and anything that floats over it. `relative` so the timeline can
+         be positioned against the map area rather than the window, which keeps it
+         clear of the side panel. -->
+    <div class="flex-1 h-full relative">
+      <!-- Placeholder tint behind the tiles; light, to match the default base map.
+           Sized with w-full/h-full rather than absolute positioning: MapLibre
+           measures this element when it initialises, and a map that comes up with
+           no height renders a blank canvas with no error anywhere. -->
+      <div class="w-full h-full bg-slate-200" id="map"></div>
+
+      <!-- The retrospective timeline. Empty until a release index loads; an older
+           deployment without releases.json simply never fills it. -->
+      <div class="absolute left-0 right-0 bottom-0 z-10 pointer-events-none" id="timeline"></div>
+    </div>
 
     <aside class="shrink-0 w-[360px] h-full overflow-y-auto bg-panel border-l border-slate-200 p-4 flex flex-col" id="panel">
       <div class="flex-1 flex flex-col items-center text-center text-slate-500 mt-10" id="panel-empty">

@@ -247,6 +247,34 @@ export async function loadRun(base) {
   }
 }
 
+/* Parsed releases, kept by date so scrubbing the timeline does not re-fetch and
+ * re-parse ~6 MB of CSV for a day already seen.
+ *
+ * Bounded, because a parsed release is tens of megabytes of live objects — 25k
+ * cells and 17k forecasts as Maps — and a year of them would exhaust the tab.
+ * Eight is enough to keep a playback window and its prefetch resident; beyond
+ * that the oldest goes, and revisiting it costs one fetch.
+ */
+const CACHE_MAX = 8;
+const cache = new Map();
+
+export function cachedRelease(key) { return cache.get(key) || null; }
+
+export async function loadReleaseCached(base, key) {
+  const hit = cache.get(key);
+  if (hit) {
+    // Re-inserting moves it to the end, so eviction takes the least recently
+    // used rather than the oldest fetched.
+    cache.delete(key);
+    cache.set(key, hit);
+    return hit;
+  }
+  const release = await loadRelease(base);
+  cache.set(key, release);
+  while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
+  return release;
+}
+
 export async function loadRelease(base) {
   const root = base.endsWith("/") ? base : base + "/";
   const [cellsText, forecastsText, rollupText, layersText, palettesText, modelsText] =

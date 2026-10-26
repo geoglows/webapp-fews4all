@@ -449,6 +449,48 @@ export function build(rel) {
 
 // Which resolution the map is showing, derived from the layers' own zoom bands
 // rather than tracked separately — the bands are the single source of truth.
+/* Draw a different release on the tiles that are already loaded.
+ *
+ * The geometry never changes — cells.pmtiles holds the same 4.4M hexagons every
+ * day — so swapping a release is not a reload. It is clearing the per-feature
+ * state, rebuilding the four visibility filters from the new day's cell ids, and
+ * re-applying state. That is the same work a model checkbox already triggers,
+ * which is why scrubbing a timeline can be smooth.
+ *
+ * THE CLEAR IS NOT OPTIONAL. applyState only walks the cells in the release it
+ * is given, so a cell flagged yesterday and not today would never be visited and
+ * would keep yesterday's severity — stale colour that outlives the data it came
+ * from. Nothing hit this before because the app only ever loaded one release.
+ */
+export function swap(rel) {
+  if (!release) return build(rel);
+  if (!rel || rel === release) return;
+
+  clearSelection();
+  for (const res of release.resolutions) {
+    const ref = tileRef(res);
+    if (ref && map.getSource(ref.source)) {
+      map.removeFeatureState({source: ref.source, sourceLayer: ref.sourceLayer});
+    }
+  }
+
+  release = rel;
+  setPalettes(rel.rules.palettes);
+  setModelPalettes(rel.rules.models);
+
+  for (const layer of rel.rules.layers || []) {
+    const res = Number(String(layer.id).split("-").pop());
+    // Both the fill and the outline are filtered to this day's cells; the split
+    // bands come from their own GeoJSON source and are rebuilt below instead.
+    for (const id of [layer.id, fillId(res), lineId(res)]) {
+      if (map.getLayer(id)) map.setFilter(id, layer.filter);
+    }
+  }
+
+  for (const res of rel.resolutions) applyState(res);
+  refreshSplits();
+}
+
 export function currentRes() {
   const z = map.getZoom();
   let chosen = release ? release.resolutions[0] : null;

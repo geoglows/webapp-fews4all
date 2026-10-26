@@ -102,6 +102,18 @@ MANIFEST_BASELINE_N = 10          # how many past releases the volume check aver
 # because refusing to run at all is the worse failure.
 RELEASE_POINTER = "current_release.txt"
 
+# Every release the output directory holds, summarised for the time slider. The
+# pointer says which release is current; this says which ones EXIST, which is a
+# different question and the only one a browser cannot answer for itself — there
+# is no directory listing over HTTP, and probing dates backwards would be both
+# slow and wrong on a day the pipeline skipped.
+#
+# It carries each release's per-model status as well as its date, because a day
+# missing a model is not the same kind of day as a complete one: 2026-10-21 and
+# -22 were GEOGLOWS-only, and an animation that did not mark them would show
+# warnings halving and recovering as though that were the weather.
+RELEASE_INDEX = "releases.json"
+
 # The input folder step 1 last filled, read by step 2 when it is not told which
 # folder to use. The same bargain as the release pointer: written only after a
 # fetch lands cleanly, so it never names a folder that is still filling, and
@@ -543,9 +555,27 @@ HYDRORIVERS_SNAP_RINGS = 2
 FLOOD_HUB_FILL_PREFIX = "from "
 
 # ---- river network -------------------------------------------------------
-# Topology lifted out of the v3 stream tiles by static/build_stream_attrs.py, so
-# the daily run can tell a river reported twice from two rivers meeting, and both
+# Topology read out of the GEOGLOWS v2 model table by static/build_stream_attrs.py,
+# so the daily run can tell a river reported twice from two rivers meeting, and both
 # from two rivers that never meet. The daily GEOGLOWS file carries none of this.
+#
+# It has to be v2, because the forecasts are v2. This table was first built from the
+# v3 stream TILES, which are a different network with a different id space: only
+# 68.5% of v2 reach ids appear in v3 at all, so on a measured release 47.4% of
+# flagged reaches were simply unknown to the table and 3,572 of 3,591 multi-reach
+# cells could not be resolved. A reach the table does not know is never merged -- by
+# design, in streams.py -- so an unknown reach is not a wrong answer, it is a cell
+# that keeps reporting four rivers when it holds one.
+#
+# The model table is the same file the h3 crosswalk was built from (its DSLINKNO is
+# what produced `report_id`), so the topology here and the topology behind the
+# crosswalk are now one source. 6,838,900 reaches, exactly the crosswalk's id set.
+#   LINKNO -> river_id   DSLINKNO -> next_id (-1 = terminal, written blank)
+#   TerminalLink -> outlet_id   DSContArea -> ds_cont_area   strmOrder -> strahler
+STREAMS_V2_MODEL_TABLE = os.path.join(
+    ROOT, "Other", "matching", "files", "v2-model-table.parquet")
+# The v3 tiles stay, for map CONTEXT only -- the stream lines drawn under the
+# hexagons. Nothing in the daily run reads topology from them any more.
 STREAM_TILES_PATH = os.path.join(BACKEND, "static", "tiles", "streams.pmtiles")
 STREAM_ATTRS_CSV = os.path.join(BACKEND, "static", "stream_attrs.csv")
 # How far downstream to look when deciding whether two flagged reaches are the

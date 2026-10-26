@@ -25,6 +25,26 @@ export const OUTPUT_BASE = "/backend/output/";
 // pointer. It is the last resort, not the normal path.
 export const FALLBACK_RELEASE = "2026-09-23";
 
+// Every release the pipeline has published, summarised. Needed because a browser
+// cannot list a directory, so without this the app can only ever know about the
+// one release the pointer names.
+export const RELEASE_INDEX_URL = OUTPUT_BASE + "releases.json";
+
+export const releaseBase = (name) => OUTPUT_BASE + name + "/";
+
+export async function loadReleaseIndex() {
+  try {
+    const r = await fetch(RELEASE_INDEX_URL, {cache: "no-store"});
+    if (!r.ok) return null;
+    const data = await r.json();
+    return Array.isArray(data.releases) && data.releases.length ? data : null;
+  } catch {
+    // An older deployment has no index. The app still draws today; it just
+    // cannot offer history, which is a missing feature rather than a failure.
+    return null;
+  }
+}
+
 export async function resolveRelease() {
   let release = FALLBACK_RELEASE;
   try {

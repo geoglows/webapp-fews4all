@@ -119,6 +119,82 @@ def baseline(model, output_dir=None, exclude=None):
     return statistics.median(counts)
 
 
+def all_releases(output_dir=None):
+    """Every release folder, oldest first. Names only."""
+    root = output_dir or C.OUTPUT_DIR
+    if not os.path.isdir(root):
+        return []
+    return sorted(n for n in os.listdir(root)
+                  if re.fullmatch(r"\d{4}-\d{2}-\d{2}", n)
+                  and os.path.isdir(os.path.join(root, n)))
+
+
+def _row(release, root):
+    """One release, reduced to what a time slider needs.
+
+    Deliberately small: this file is fetched on every page load and grows by a
+    row a day, so it carries counts and statuses rather than anything a release
+    folder can answer for itself.
+    """
+    data = read(os.path.join(root, release)) or {}
+    models = data.get("models") or {}
+    steps = data.get("steps") or {}
+    row = {
+        "release": release,
+        "models": {m: (r.get("status") or C.MODEL_SKIPPED) for m, r in models.items()},
+        "flagged": {m: r.get("flagged") for m, r in models.items()
+                    if isinstance(r.get("flagged"), int)},
+    }
+    # Which models are NOT in this release, named rather than inferred, so the
+    # slider can mark the day without re-deriving the rule.
+    row["missing"] = sorted(m for m, st in row["models"].items()
+                            if st in (C.MODEL_SKIPPED, C.MODEL_DROPPED))
+    three = steps.get("step3_compare") or {}
+    if three.get("by_res"):
+        row["cells"] = three["by_res"]
+    if three.get("agreement"):
+        row["agreement"] = three["agreement"]
+    if not models:
+        # A folder with no run record at all: published before manifests existed,
+        # or a half-built one. Listed, because the tables may still be fine, but
+        # marked so nothing claims to know what was in it.
+        row["unknown"] = True
+    return row
+
+
+def index(output_dir=None, current=None):
+    root = output_dir or C.OUTPUT_DIR
+    releases = all_releases(root)
+    return {
+        "generated": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "current": current or (releases[-1] if releases else None),
+        "releases": [_row(r, root) for r in releases],
+    }
+
+
+def write_index(output_dir=None, current=None):
+    """Rebuilt from scratch each time rather than appended to.
+
+    A release can be rerun and change, and folders can be pruned, so an appended
+    index would drift from what is actually on disk. Rebuilding costs one small
+    JSON read per release and is always right.
+    """
+    root = output_dir or C.OUTPUT_DIR
+    try:
+        data = index(root, current)
+        os.makedirs(root, exist_ok=True)
+        p = os.path.join(root, C.RELEASE_INDEX)
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, sort_keys=True)
+            f.write("\n")
+        os.replace(tmp, p)
+        return data
+    except Exception as e:                      # an index is not worth a run
+        print(f"  note: could not write {C.RELEASE_INDEX} ({e})")
+        return None
+
+
 def summarise(data):
     """One line per model, for the end of a run."""
     out = []

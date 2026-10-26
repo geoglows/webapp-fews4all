@@ -101,8 +101,13 @@ def main(input_dir=None, keep_staging=False):
     rule(f"Publishing {release}")
     live = promote(staged, os.path.join(root, release))
     C.write_release_pointer(release)
+    # Rebuilt after the pointer, from whatever is on disk — so a rerun of an old
+    # day, or a pruned folder, is reflected rather than drifting.
+    idx = MAN.write_index(root, current=release)
     print(f"  {live}")
     print(f"  {C.RELEASE_POINTER} -> {release}")
+    if idx:
+        print(f"  {C.RELEASE_INDEX} -> {len(idx['releases'])} release(s)")
 
     if not keep_staging:
         try:

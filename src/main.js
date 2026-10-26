@@ -18,9 +18,10 @@ import "./style.css";                       // Tailwind + theme + MapLibre overr
 import "maplibre-gl/dist/maplibre-gl.css";  // MapLibre's own stylesheet (from npm)
 
 import {DATASETS} from "./config.js";
-import {resolveRelease} from "./sources.js";
+import {loadReleaseIndex, releaseBase, resolveRelease} from "./sources.js";
 import {showRelease} from "./ui/header.js";
-import {loadRelease} from "./release.js";
+import * as timeline from "./controls/timeline.js";
+import {loadRelease, loadReleaseCached} from "./release.js";
 import {map, registerPanelFocus} from "./map.js";
 import {view, visibleFlashModels} from "./settings.js";
 import * as panel from "./panel.js";
@@ -113,12 +114,45 @@ map.once("load", () => {
 
   // Which release to draw comes from the pipeline's own pointer rather than a
   // constant in the source, so the morning's run reaches the map without an edit.
+  // Draw a different day on the tiles already loaded.
+  //
+  // Deliberately NOT display.restate()/filters.restate(): those reset the
+  // controls to the release's defaults, which is right once at boot and wrong on
+  // every day after — it would throw away the user's model and severity choices
+  // each time the timeline moved.
+  //
+  // The token guards against out-of-order arrivals. Scrubbing fast fires several
+  // loads at once, and without it a slow early day could land after a fast later
+  // one and leave the map showing a date the header disagrees with.
+  let showToken = 0;
+  function showDay(date) {
+    const token = ++showToken;
+    return loadReleaseCached(releaseBase(date), date)
+      .then((release) => {
+        if (token !== showToken) return;
+        showRelease(release, date);
+        cells.swap(release);
+        heat.build(release);
+        flash.build(release);
+        panel.rerenderPanel();
+        timeline.setCurrent(date);
+      })
+      .catch(panel.panelError);
+  }
+
+  timeline.init({
+    show: showDay,
+    // Warm the cache without touching the map, so playback does not stall on a
+    // fetch it could have started a second earlier.
+    prefetch: (date) => { loadReleaseCached(releaseBase(date), date).catch(() => {}); },
+  });
+
   resolveRelease()
     .then(({release: name, base}) => loadRelease(base).then((release) => {
       showRelease(release, name);
-      return release;
+      return {release, name};
     }))
-    .then((release) => {
+    .then(({release, name}) => {
       cells.build(release);
       heat.build(release);
       flash.build(release);
@@ -128,6 +162,9 @@ map.once("load", () => {
       display.restate();
       filters.restate();
       panel.rerenderPanel();
+      // The timeline is the last thing to arrive and the only optional one: a
+      // deployment without releases.json simply never gets a bar.
+      loadReleaseIndex().then((index) => timeline.build(index, name));
     })
     .catch(panel.panelError);
   // Flash models default to on, so draw their polygons at startup.
