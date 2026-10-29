@@ -15,7 +15,7 @@ import {applyStreamStyle, setStreamsOn, streamsOn} from "../layers/streams.js";
 import {dropdownControl} from "../ui/dropdown.js";
 import {check, head, note, resetButton, rule} from "../ui/form.js";
 import {modelLabel} from "../format.js";
-import {modelRamp, palettes, paletteColor, restoreDisplayDefaults, view} from "../settings.js";
+import {claimRamp, modelRamp, palettes, paletteColor, restoreDisplayDefaults, view} from "../settings.js";
 
 // main.js injects what a settings change should trigger, so this control never
 // imports the orchestration that imports it.
@@ -330,10 +330,14 @@ export function displayControl() {
 
         body.querySelectorAll(".ramp-select").forEach((sel) => sel.addEventListener("change", () => {
           const key = sel.dataset.key;
-          if (key === ALL_MODELS) for (const m of PANEL_MODELS) modelRamp[m] = sel.value;
-          else if (key === "flash") view.flashRampId = sel.value;
+          // claimRamp marks the model as the viewer's choice, so the next release
+          // -- or the next step along the timeline -- seeds around it instead of
+          // stamping the release's own palette back over it.
+          if (key === ALL_MODELS) {
+            for (const m of PANEL_MODELS) { modelRamp[m] = sel.value; claimRamp(m); }
+          } else if (key === "flash") view.flashRampId = sel.value;
           else if (key.startsWith("concur")) view.concurRamp[Number(key.slice(6))] = sel.value;
-          else modelRamp[key] = sel.value;
+          else { modelRamp[key] = sel.value; claimRamp(key); }
           // Once two models are on different ramps, a cell holding both has no
           // single right color — so the moment they stop matching, concurrence
           // takes a color of its own and the question stops arising. Switched on

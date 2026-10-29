@@ -71,32 +71,13 @@ function heatKeyHtml(m) {
   const scale =
     `<div class="flex justify-between text-[10px] font-semibold text-slate-400 mt-1">` +
     keys.map((k) => `<span>${SEVERITY[k].label}</span>`).join("") + `</div>`;
-  // A second bar when concurrence has a surface of its own: same three rungs, read
-  // left to right in both, so the only difference between them is the one thing the
-  // hue is there to say. The labels sit under the pair rather than under each,
-  // because they mean the same positions on both.
-  //
-  // It repeats in every model tile, like the old concurrence mark did: it describes
-  // a set of models rather than any one of them, and a reader looking at one tile
-  // should not have to hunt through the others to learn what the color means.
-  return `<div class="mb-2">` + bar(rampFor(m)) + concurBarHtml(bar) + scale + `</div>`;
+  // Concurrence used to add a second bar HERE, in every model tile. It described a
+  // set of models rather than any one of them, so each of the three tiles carried
+  // the same two extra rows saying the same thing — the legend repeated three
+  // times under three different model names, each implying it was about that
+  // model. It is one block under the tiles now; see concurLegendHtml below.
+  return `<div class="mb-2">` + bar(rampFor(m)) + scale + `</div>`;
 }
-
-// One bar per agreement count — unless the counts share a ramp, in which case one
-// bar reading "2+ models". Two identical bars under two different labels would be
-// the legend insisting on a distinction nothing on the map is drawing.
-const concurRow = (bar, rampId, label) =>
-  `<div class="flex items-center gap-1.5 mt-1.5">` +
-  `<div class="flex-1">${bar(rampId)}</div>` +
-  `<span class="text-[10px] font-semibold text-slate-400 shrink-0">${label}</span></div>`;
-
-const concurBarHtml = (bar) => {
-  if (!view.concurHeat) return "";
-  const one = sharedConcurRamp();
-  return one
-    ? concurRow(bar, one, CONCUR_ANY_LABEL)
-    : CONCUR_COUNTS.map((n) => concurRow(bar, view.concurRamp[n], CONCUR_LABEL[n])).join("");
-};
 
 const colorSwatch = (style) =>
   `<span class="inline-block w-3 h-3 rounded-sm shrink-0" style="${style}"></span>`;
@@ -113,24 +94,69 @@ function modelLegendHtml(m) {
       `background:${paletteColor(rampFor(m), k)};border:1px solid rgb(255 255 255 / .25)`),
     label: SEVERITY[k].label,
   }));
-  // Concurrence takes a hue of its own in the cells view too, so it needs saying
-  // here as well — one swatch at the worst rung, which is the end of the ramp a
-  // reader will actually be looking at.
-  if (view.concurHeat) {
-    // Same collapse as the heat key: one swatch while the counts share a ramp.
-    const one = sharedConcurRamp();
-    const swatchFor = (rampId) => colorSwatch(
-      `background:${paletteColor(rampId, SEV_KEYS[SEV_KEYS.length - 1])};` +
-      `border:1px solid rgb(255 255 255 / .25)`);
-    if (one) {
-      entries.push({swatch: swatchFor(one), label: CONCUR_ANY_LABEL});
-    } else {
-      for (const n of CONCUR_COUNTS) {
-        entries.push({swatch: swatchFor(view.concurRamp[n]), label: CONCUR_LABEL[n]});
-      }
-    }
-  }
+  // Concurrence is NOT added here either — same reason as the heat key above. It
+  // belongs to the set of models, not to the tile it happens to be sitting in.
   return tileLegend(entries);
+}
+
+/**
+ * Where models agree, as one block on the panel rather than a repeat in every tile.
+ *
+ * Shown only when concurrence has a hue of its own: with the counts folded back
+ * into the severity surface there is no second color to explain, and a legend for
+ * a distinction the map is not drawing is worse than no legend. Collapses to a
+ * single "2+ models" row while the counts share a ramp, for the same reason — two
+ * identical bars under two different labels would be inventing a difference.
+ *
+ * It follows the severity filter like every other key here: hide Warning and the
+ * bars lose their lightest end, so the legend never promises a color the map has
+ * stopped drawing. Light-panel styling, not the tiles' dark one, because it now
+ * sits on the panel itself.
+ */
+function concurLegendHtml() {
+  if (!view.concurHeat) return "";
+  const keys = SEV_KEYS.filter((k) => visibleSeverities.has(k));
+  if (!keys.length) return "";
+  const one = sharedConcurRamp();
+  const rows = one
+    ? [{ramp: one, label: CONCUR_ANY_LABEL}]
+    : CONCUR_COUNTS.map((n) => ({ramp: view.concurRamp[n], label: CONCUR_LABEL[n]}));
+
+  let rowsHtml;
+  if (view.heatOn) {
+    // Same 15%..99% run as the tiles' heat key, so a bar here and a bar up there
+    // are read the same way.
+    const step = keys.length > 1 ? 84 / (keys.length - 1) : 0;
+    const bar = (rampId) => {
+      const stops = keys.map((k, i) =>
+        `${paletteColor(rampId, k)} ${keys.length > 1 ? 15 + i * step : 50}%`).join(",");
+      return `<div class="h-2 rounded-full border border-slate-300/60" ` +
+        `style="background:linear-gradient(to right,${stops})"></div>`;
+    };
+    rowsHtml = rows.map(({ramp, label}) =>
+      `<div class="flex items-center gap-2 mt-1.5">` +
+      `<div class="flex-1">${bar(ramp)}</div>` +
+      `<span class="text-[10px] font-semibold text-slate-500 shrink-0 w-[58px] text-right">` +
+      `${label}</span></div>`).join("") +
+      // One scale under the stack: every bar spans the same rungs, so repeating the
+      // rung names per bar would say the same thing two or three times over.
+      `<div class="flex justify-between text-[10px] font-semibold text-slate-400 mt-1 pr-[66px]">` +
+      keys.map((k) => `<span>${SEVERITY[k].label}</span>`).join("") + `</div>`;
+  } else {
+    // Cells view: one chip per count, at the worst rung still being drawn — the end
+    // of the ramp a reader is actually looking at.
+    const worst = keys[keys.length - 1];
+    rowsHtml = `<div class="flex flex-wrap gap-x-3 gap-y-1 mt-1.5">` +
+      rows.map(({ramp, label}) =>
+        `<span class="flex items-center gap-1.5 text-[10.5px] font-semibold text-slate-500">` +
+        colorSwatch(`background:${paletteColor(ramp, worst)};` +
+          `border:1px solid rgb(148 163 184 / .5)`) + `${label}</span>`).join("") +
+      `</div>`;
+  }
+
+  return `<div class="mb-3 rounded-[10px] border border-slate-200 bg-slate-50 px-3 py-2">` +
+    `<div class="text-[10px] uppercase tracking-[.04em] text-slate-500 font-semibold">` +
+    `Model Agreement</div>` + rowsHtml + `</div>`;
 }
 
 // The flash overlay's two tiers, drawn as they appear on the map, limited to the
@@ -315,13 +341,20 @@ export function renderPanel(props) {
   // forecasts would have been, and names the control that turns it off. Amber
   // rather than slate: a state to notice, not a label. It no longer fires at boot —
   // the filter opens off — but it is the same strong effect whenever it is on.
-  const concurNoticeHtml = view.concurrenceOnly
+  // The banner names the LEVEL, because "concurrence only" read the same at 2 and
+  // at 3 while the two hide very different amounts of the map.
+  const concurNoticeHtml = view.concurMin
     ? `<div class="mb-3 rounded-[10px] border border-amber-300 bg-amber-50 px-3 py-2">` +
       `<div class="flex items-start gap-1.5">` +
       icon("funnel", "text-amber-600 text-[13px] mt-[1px]") +
-      `<div><div class="text-[12px] font-semibold text-amber-900">Concurrence only</div>` +
+      `<div><div class="text-[12px] font-semibold text-amber-900">` +
+      `${view.concurMin >= PANEL_MODELS.length ? "Full agreement only" : "Concurrence only"}` +
+      `</div>` +
       `<div class="text-[11px] leading-snug text-amber-800 mt-0.5">` +
-      `Showing just the ${view.dataset.unit.toLowerCase()}s two or more models agree on. ` +
+      `Showing just the ${view.dataset.unit.toLowerCase()}s ` +
+      `${view.concurMin >= PANEL_MODELS.length
+        ? `all ${PANEL_MODELS.length} models agree on`
+        : `${view.concurMin} or more models agree on`}. ` +
       `Turn it off under Filters → Severity.</div></div></div></div>`
     : "";
 
@@ -332,7 +365,8 @@ export function renderPanel(props) {
   const riverSection =
     `<div id="section-river" class="mb-4">` + sectionHeader("River Floods", "sec-river") +
     bodyTag("sec-river") + concurNoticeHtml +
-    noneShown(PANEL_MODELS, visibleModels) + tiles + impactHtml + `</div></div>`;
+    noneShown(PANEL_MODELS, visibleModels) + concurLegendHtml() + tiles +
+    impactHtml + `</div></div>`;
 
   // Section 2 — Flash Floods: a global overlay, one tile per enabled model.
   const flashKeys = FLASH_MODELS.map((fm) => fm.key);

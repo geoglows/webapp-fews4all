@@ -149,6 +149,52 @@ def test_pointer(out):
        "and so does no pointer at all")
 
 
+def test_suppression(out):
+    """The GEOGLOWS blackout box. TEMPORARY — delete this with the box itself.
+
+    Pinned because a blackout that silently stops working is the worse half of the
+    bargain: the blob comes back and nobody connects it to a change here. And
+    because a blackout that silently WIDENS is worse still.
+    """
+    print("\nThe GEOGLOWS blackout box")
+    from common import models as M
+
+    ok(getattr(C, "GEOGLOWS_BLACKOUT_BOX", None),
+       f"a box is configured ({getattr(C, 'GEOGLOWS_BLACKOUT_BOX', None)})")
+
+    saved = C.GEOGLOWS_BLACKOUT_BOX
+    try:
+        C.GEOGLOWS_BLACKOUT_BOX = (17.0, 57.0, 45.0, 71.0)
+        path = os.path.join(out, "geoglows.csv")
+        # Helsinki is inside; Lisbon and Nairobi are not. The fourth row carries no
+        # coordinates at all, which is the case that must fail OPEN.
+        with open(path, "w", encoding="utf-8") as f:
+            f.write("comid,mean,ret_per,lat,lon\n")
+            f.write("111,900,5,60.17,24.94\n")      # Helsinki — inside
+            f.write("222,900,5,38.72,-9.14\n")      # Lisbon — outside
+            f.write("333,900,5,-1.29,36.82\n")      # Nairobi — outside (lat below)
+            f.write("444,900,5,,\n")                # no coordinate
+        ids = {r["native_id"] for r in M.read_geoglows(path)}
+        ok("111" not in ids, "a reach inside the box never leaves the reader")
+        ok({"222", "333"} <= ids, f"reaches outside it are untouched ({sorted(ids)})")
+        ok("444" in ids,
+           "a reach with no coordinate is KEPT — a doubtful case must not be hidden")
+        ok(M.suppressed_last == 1, f"and the count is recorded ({M.suppressed_last})")
+
+        # Nairobi shares the box's longitude but not its latitude: both bounds have
+        # to bite, or the blackout becomes a band around the planet.
+        C.GEOGLOWS_BLACKOUT_BOX = (17.0, -5.0, 45.0, 71.0)
+        ids = {r["native_id"] for r in M.read_geoglows(path)}
+        ok("333" not in ids, "widening the latitude does reach Nairobi — both bounds bite")
+
+        C.GEOGLOWS_BLACKOUT_BOX = None
+        ids = {r["native_id"] for r in M.read_geoglows(path)}
+        ok(len(ids) == 4, "and no box at all withholds nothing")
+        ok(M.suppressed_last == 0, "with the count back to zero")
+    finally:
+        C.GEOGLOWS_BLACKOUT_BOX = saved
+
+
 def main():
     out = tempfile.mkdtemp(prefix="fews-guards-")
     try:
@@ -157,6 +203,7 @@ def main():
         test_volume(out)
         test_baseline_abstains(out)
         test_pointer(out)
+        test_suppression(out)
     finally:
         shutil.rmtree(out, ignore_errors=True)
     print(f"\n{len(PASS)} passed, {len(FAIL)} failed")

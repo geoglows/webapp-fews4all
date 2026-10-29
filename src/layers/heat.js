@@ -195,12 +195,14 @@ function buckets() {
     // be missing from the surface above it.
     // The COUNT, not a yes/no: it picks which concurrence surface the cell lands
     // on as well as answering the filter. 0 when nothing corroborates it.
-    const n = split || view.concurrenceOnly ? concurCount(cell, visibleModels) : 0;
+    const n = split || view.concurMin ? concurCount(cell, visibleModels) : 0;
     const agrees = n >= 2;
 
     // Same filter the cells obey: the surface and the hexagons underneath it have
     // to be built from the same set, or clicking a warm patch would find nothing.
-    if (view.concurrenceOnly && !agrees) continue;
+    // `n < view.concurMin`, not `!agrees`: at level 3 a two-model cell agrees and
+    // still has to go, or the surface would be warmer than the hexagons under it.
+    if (view.concurMin && n < view.concurMin) continue;
 
     // The model and severity filters decide what reaches the surface, so turning a
     // model off cools the places only it saw rather than leaving them lit.

@@ -29,7 +29,7 @@ import {cellToBoundary, cellToLatLng} from "h3-js";
 import {CONCUR_COUNTS, EMPHASIS, EMPTY_FC, SEV_KEYS, hoverFill, selectedFill} from "../config.js";
 import {applyLayerOrder, map, registerPointerSource, registerTooltipLayers, updateResReadout} from "../map.js";
 import {clipToBand, lonRange, nearestCopy} from "../geometry.js";
-import {concurCount, corroborated, modelLabel, worstSeverity} from "../format.js";
+import {concurCount, corroborated, meetsConcur, modelLabel, worstSeverity} from "../format.js";
 import {modelRamp, paletteColor, rampFor, setModelPalettes, setPalettes, view, visibleModels, visibleSeverities} from "../settings.js";
 
 let release = null;
@@ -73,9 +73,9 @@ function visibleForecasts(res, id) {
   // forecast is backed up, and it still is when the backing model is switched off.
   // The strict test made the filter unsatisfiable at one visible model — see the
   // note on both in format.js.
-  if (fcs.length && view.concurrenceOnly) {
+  if (fcs.length && view.concurMin) {
     const cell = release.cellAt(res, id);
-    if (!cell || !corroborated(cell, visibleModels)) return [];
+    if (!cell || !meetsConcur(cell, visibleModels, view.concurMin)) return [];
   }
   return fcs;
 }

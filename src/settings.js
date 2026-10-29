@@ -59,16 +59,21 @@ const DISPLAY_DEFAULTS = {
 // menus own different questions and each has its own reset. A setting listed here
 // decides which forecasts are on the map; one listed above decides how they look.
 const FILTER_DEFAULTS = {
-  // Show only the cells two or more models agree on. A filter, not a highlight:
-  // coloring concurrence separately marks agreement where it sits among
-  // everything else, and what this answers is the different question of what the
-  // map looks like with the uncorroborated forecasts taken away.
+  // The agreement floor a cell must clear to stay on the map: 0 is off, 2 keeps
+  // what any second model backs up, 3 keeps only what every model saw. A filter,
+  // not a highlight — coloring concurrence separately marks agreement where it
+  // sits among everything else, and this answers the different question of what
+  // the map looks like with the uncorroborated forecasts taken away.
   //
-  // OFF at boot. It hides roughly 96% of the flagged cells, which is too much to
-  // take away from someone who has not asked for it — the app should open showing
-  // what the models actually said. The panel still announces it whenever it IS in
-  // force, because an almost-empty map otherwise reads as a quiet day.
-  concurrenceOnly: false,
+  // A LEVEL rather than the boolean this was, because "two models agree" and "all
+  // three agree" are different claims and only the first was reachable. 3 is the
+  // strongest statement the data can make and had no way to be asked for.
+  //
+  // 0 at boot. Level 2 alone hides roughly 96% of the flagged cells, which is too
+  // much to take away from someone who has not asked for it — the app should open
+  // showing what the models actually said. The panel announces whichever level is
+  // in force, because an almost-empty map otherwise reads as a quiet day.
+  concurMin: 0,
 };
 // Outline weight per severity, in pixels. Nested rather than flat so the three
 // read as one control, and copied rather than shared on every use — Object.assign
@@ -107,6 +112,16 @@ export const view = {
   // tool, not a drawing setting, and "Restore defaults" has no business reaching
   // out of the Display menu to change which tool is in the user's hand.
   pointerMode: "select",
+  // Which named view is in force, or null for "Custom". Deliberately NOT in
+  // either DEFAULTS block: it is a label for what the other settings add up to,
+  // not a setting of its own, and neither menu's reset should be able to claim a
+  // view is on. src/views.js owns it; both menus clear it when touched by hand.
+  //
+  // "default" at boot, not null, because the app opens in exactly what the Default
+  // view applies -- these DEFAULTS and the release's own palettes, which are the
+  // same amber. Opening on null made the menu announce "Custom -- changed by hand"
+  // to someone who had not touched anything yet.
+  preset: "default",
   ...DISPLAY_DEFAULTS,
   ...FILTER_DEFAULTS,
   lineWidth: {...LINE_WIDTH_DEFAULTS},
@@ -147,10 +162,25 @@ export function sharedConcurRamp() {
   return CONCUR_COUNTS.every((n) => view.concurRamp[n] === first) ? first : null;
 }
 
-/** Default each model to the palette the release says it uses. */
+// Models whose ramp the viewer has chosen, by the Display menu or a preset.
+//
+// Every release states a palette per model, and every release load -- including
+// `swap()` on a date change -- used to stamp those over `modelRamp`. So picking
+// blues for GloFAS and then stepping one day back on the timeline silently put it
+// back to the release's amber: the viewer's choice lasted exactly until they
+// touched the date. The release is a DEFAULT, not an instruction, so it now seeds
+// only the models nobody has spoken for.
+export const userRamp = new Set();
+
+/** Remember that this model's ramp is the viewer's choice, not the release's. */
+export function claimRamp(model) {
+  if (model) userRamp.add(model);
+}
+
+/** Seed each model from the palette the release says it uses, viewer's picks kept. */
 export function setModelPalettes(models) {
   for (const m of models || []) {
-    if (m && m.model && m.palette) modelRamp[m.model] = m.palette;
+    if (m && m.model && m.palette && !userRamp.has(m.model)) modelRamp[m.model] = m.palette;
   }
 }
 export const visibleSeverities = new Set(SEV_KEYS);          // severity filter
@@ -209,6 +239,10 @@ export function restoreDisplayDefaults() {
   view.flashLineWidth = {...FLASH_LINE_WIDTH_DEFAULTS};
   view.concurRamp = {...CONCUR_RAMP_DEFAULTS};
   for (const m of PANEL_MODELS) modelRamp[m] = DEFAULT_RAMP;
+  // Hand the models back to the release. Leaving them claimed would mean "Restore
+  // defaults" restored the app's colors and then froze them there, so the next
+  // release's own palettes never arrived.
+  userRamp.clear();
 }
 
 // The Filters counterpart: every "which forecasts" choice back to boot state.

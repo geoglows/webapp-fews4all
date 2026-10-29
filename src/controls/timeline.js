@@ -45,7 +45,7 @@ const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
 
 /* "2026-10-23" -> "23 Oct 2026". Parsed by hand rather than through Date(),
  * which reads a bare ISO date as UTC midnight and shows the day before to anyone
- * west of Greenwich — the same trap the header's prettyDate avoids. */
+ * west of Greenwich. */
 function full(date) {
   const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(date || "");
   return m ? `${Number(m[3])} ${MONTHS[Number(m[2]) - 1]} ${m[1]}` : String(date || "");
@@ -57,11 +57,39 @@ const current = () => releases[idx] || null;
  * record already decided this; nothing is re-derived here. */
 const isPartial = (r) => Array.isArray(r.missing) && r.missing.length > 0;
 
+/* Models the run marked `thin`: present, but carrying far fewer forecasts than
+ * their own recent median — the volume guard's way of saying a fetch may have
+ * been half a fetch.
+ *
+ * This is marked here because it stopped being said anywhere else. The header
+ * used to carry three states (missing, thin, all clear) beside the date; with the
+ * header's stamp gone the timeline is the only thing left reporting on a release,
+ * and a quarter-sized GEOGLOWS looked exactly like a quiet day. The status is
+ * already in releases.json, so this reads it rather than deriving anything. */
+const thinModels = (r) =>
+  Object.keys(r.models || {}).filter((m) => r.models[m] === "thin").sort();
+
+/* Either kind of trouble. One amber for both: the question a mark answers is
+ * "should I trust this day's totals", and missing and thin are both no. Which it
+ * is, is what the note and the hover say. */
+const isFlagged = (r) => isPartial(r) || thinModels(r).length > 0;
+
+/* The short form, for the 150px block beside the date. Both halves when a day
+ * manages both, truncated with the full text on hover. */
+function noteText(r) {
+  const bits = [];
+  if (isPartial(r)) bits.push(`without ${r.missing.join(", ")}`);
+  const thin = thinModels(r);
+  if (thin.length) bits.push(`${thin.join(", ")} thin`);
+  return bits.join(" · ");
+}
+
 function tickTitle(r) {
   const cells = (r.cells || {})["6"];
   const bits = [full(r.release)];
   if (typeof cells === "number") bits.push(`${cells.toLocaleString()} cells`);
-  if (isPartial(r)) bits.push(`without ${r.missing.join(", ")}`);
+  const note = noteText(r);
+  if (note) bits.push(note);
   return bits.join(" · ");
 }
 
@@ -77,7 +105,7 @@ function render() {
 }
 
 function collapsed(r) {
-  const warn = isPartial(r)
+  const warn = isFlagged(r)
     ? `<span class="text-amber-700" title="${tickTitle(r)}">${icon("exclamation-triangle", "text-[11px]")}</span>`
     : "";
   return `
@@ -96,9 +124,9 @@ function expanded(r) {
   const last = releases.length - 1;
   const ticks = releases.map((x, i) => {
     const on = i === idx;
-    const partial = isPartial(x);
-    const bg = on ? (partial ? "#b45309" : "#0284c7")
-                  : (partial ? "#fcd34d" : "#cbd5e1");
+    const flagged = isFlagged(x);
+    const bg = on ? (flagged ? "#b45309" : "#0284c7")
+                  : (flagged ? "#fcd34d" : "#cbd5e1");
     return `<button data-i="${i}" title="${tickTitle(x)}"
       class="tl-tick shrink-0 rounded-sm transition-all"
       style="width:${on ? 10 : 6}px;height:${on ? 22 : 14}px;background:${bg}"></button>`;
@@ -108,9 +136,9 @@ function expanded(r) {
   // line appears and disappears as the timeline moves, and if it were allowed to
   // size this block the track would grow and shrink under the cursor — the ticks
   // would shift sideways mid-scrub, which is maddening to aim at.
-  const note = isPartial(r)
-    ? `<div class="text-[10.5px] text-amber-700 truncate" title="without ${r.missing.join(", ")}">
-         without ${r.missing.join(", ")}</div>`
+  const noteStr = noteText(r);
+  const note = noteStr
+    ? `<div class="text-[10.5px] text-amber-700 truncate" title="${noteStr}">${noteStr}</div>`
     : `<div class="text-[10.5px] text-slate-400">&nbsp;</div>`;
 
   const step = (id, glyph, label, off) => `

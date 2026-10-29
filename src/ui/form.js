@@ -20,6 +20,13 @@ export const check = (id, label, on, accent) =>
   `<input type="checkbox" id="${id}"${on ? " checked" : ""} ` +
   `style="accent-color:${accent || "#0284c7"}">${label}</label>`;
 
+/** One option of a radio group. Same metrics as `check` so a menu holding both
+ * does not look like two menus. `name` is the group; only one of them is on. */
+export const radio = (name, id, label, on) =>
+  `<label style="display:flex;align-items:center;gap:6px;cursor:pointer;margin-bottom:3px">` +
+  `<input type="radio" name="${name}" id="${id}"${on ? " checked" : ""} ` +
+  `style="accent-color:#0284c7">${label}</label>`;
+
 /** Explanatory small print under a control. `top` is its margin above, in px. */
 export const note = (text, top = 5) =>
   `<p style="font:400 11px system-ui,sans-serif;color:#94a3b8;margin:${top}px 0 0;` +

@@ -554,6 +554,66 @@ HYDRORIVERS_SNAP_RINGS = 2
 # so the cell names that gauge rather than claiming to be one.
 FLOOD_HUB_FILL_PREFIX = "from "
 
+# ============================================================================
+# ##  TEMPORARY  ##  GEOGLOWS BLACKOUT BOX  ##  NOT A FIX  ##
+# ============================================================================
+#
+#   EVERY GEOGLOWS forecast inside the box below is DELETED from every release
+#   before anything else sees it. Not drawn, not counted, not available to
+#   agreement, not in the panel. Finland, Karelia and their neighbours are a HOLE
+#   in the GEOGLOWS layer. The other models still report there normally.
+#
+#   THIS HIDES REAL FLOODS. If a river in this box genuinely floods, FEWS4All will
+#   not say so. That was accepted knowingly on 2026-10-29 and it stays wrong until
+#   the cause below is fixed.
+#
+# WHY
+#   GEOGLOWS v2 has a gap between its retrospective record and its forecast
+#   climatology. Where the two do not meet, the return period a flow is measured
+#   against comes out far too low, so ordinary flow clears its "2-year" threshold
+#   permanently. This region is the worst instance found: the whole of Finland lit
+#   amber, every day, since the first release we kept.
+#
+# THE EVIDENCE (10 releases, 2026-09-23 .. 2026-10-29, 36 days)
+#   5,577 reaches in the box were flagged at least once
+#   1,379 of them were flagged on EVERY ONE of the 10 days
+#   1,054 of those (76%) reported the SAME severity on all 10
+#   1,009 of those (73%) sat permanently on the 2-year rung
+#   Floods end. These do not.
+#
+# WHY A BOX AND NOT A LIST OF REACHES
+#   A list built from the days we happen to have cannot make a hole: a reach that
+#   lights up for the first time tomorrow is not on it, so the blob grows back one
+#   reach at a time and the list has to be rebuilt forever. A box is a standing
+#   statement -- "we do not trust GEOGLOWS here" -- which is the true one, and it
+#   needs no maintenance. It is also honest about its own cost: it is obvious at a
+#   glance that everything inside is gone, where a list of 5,577 ids is not.
+#
+# WHAT THIS IS NOT
+#   Not a fix, not a filter the user can turn off, and not a statement about those
+#   rivers. It is a piece of tape over a known upstream defect.
+#
+# BEFORE THIS CAN BE REMOVED
+#   - Raise the climatology gap with the GEOGLOWS team; it is their data, and the
+#     same defect is presumably hurting every other consumer of v2 silently.
+#   - static/build_suppression.py reports what the box is currently swallowing --
+#     run it before deciding, so the decision is made against numbers.
+#   - When v2's return periods are rebuilt, set the box to None, DELETE this block,
+#     and rerun a release to confirm the region goes quiet on its own.
+#   - Until then it says so where it cannot be missed: the run log prints a line
+#     every single run, and run.json records the count.
+#
+# The box is west, south, east, north in degrees -- the extent of the screenshot
+# the artifact was reported from, which is Finland plus Russian Karelia and their
+# margins. Set it to None to switch the blackout off entirely.
+# ============================================================================
+GEOGLOWS_BLACKOUT_BOX = (17.0, 57.0, 45.0, 71.0)
+# A record of what was being flagged in there when the box went in, written by
+# static/build_suppression.py. NOTHING IN THE DAILY RUN READS THIS -- the box is
+# the rule. It exists so "what are we hiding?" has an answer that does not depend
+# on anyone still having the releases from October 2026.
+GEOGLOWS_SUPPRESSED_CSV = os.path.join(BACKEND, "static", "geoglows_suppressed.csv")
+
 # ---- river network -------------------------------------------------------
 # Topology read out of the GEOGLOWS v2 model table by static/build_stream_attrs.py,
 # so the daily run can tell a river reported twice from two rivers meeting, and both

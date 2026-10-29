@@ -8,9 +8,9 @@
 // second tab. So "which forecasts am I looking at" had no single answer, Display
 // Options overflowed its own height into a scrollbar, and the panel carried a
 // control that had nothing to do with the forecast it was showing.
-import {FLASH_MODELS, FLASH_TIER, FLASH_TIERS, PANEL_MODELS, SEVERITY, SEV_KEYS} from "../config.js";
+import {CONCUR_COUNTS, CONCUR_LABEL, FLASH_MODELS, FLASH_TIER, FLASH_TIERS, PANEL_MODELS, SEVERITY, SEV_KEYS} from "../config.js";
 import {dropdownControl} from "../ui/dropdown.js";
-import {check, head, note, resetButton, rule} from "../ui/form.js";
+import {check, head, note, radio, resetButton, rule} from "../ui/form.js";
 import {modelLabel} from "../format.js";
 import {applyFlashStyle} from "../layers/flash.js";
 import {
@@ -41,6 +41,15 @@ export function restate() {
 // The sentinel the "All" row carries in place of a model key.
 const ALL = "__all";
 
+// The agreement floor, as the menu offers it. Derived from CONCUR_COUNTS so a
+// fourth model added there needs no edit here; the last rung says "all" rather
+// than its number, because that is the claim being made.
+const CONCUR_LEVELS = [{value: 0, label: "Any \u2014 no agreement needed"}].concat(
+  CONCUR_COUNTS.map((n) => ({
+    value: n,
+    label: n >= PANEL_MODELS.length ? `All ${n} models agree` : `${CONCUR_LABEL[n]} or more agree`,
+  })));
+
 // A model list with an "All" row above the rule. "All" carries no model of its
 // own: it reads the others and writes to all of them, and goes indeterminate on a
 // mixed set rather than lying about a partial selection.
@@ -64,8 +73,14 @@ function body() {
     head("Severity") +
     SEV_KEYS.map((k) => check(`flt-sev-${k}`, SEVERITY[k].label, visibleSeverities.has(k))).join("") +
     `<div style="height:1px;background:#e2e8f0;margin:7px 0 6px"></div>` +
-    check("flt-concur", "Concurrence only", view.concurrenceOnly) +
-    note("Hide anything a single model saw on its own.", 3);
+    // Three mutually exclusive levels rather than one checkbox: "2 or more agree"
+    // and "all agree" are different claims, and only the first could be asked for
+    // before. Radios, not checkboxes, because the levels nest -- ticking both
+    // would mean the stricter one and say the looser one too.
+    head("Agreement") +
+    CONCUR_LEVELS.map(({value, label}) =>
+      radio("flt-concur", `flt-concur-${value}`, label, view.concurMin === value)).join("") +
+    note("Agreement is counted across the models ticked above.", 3);
 
   // The flash overlay's own two cuts, model and tier. Unlike the river models,
   // ticking one of these fetches and draws polygons rather than filtering a set
@@ -139,13 +154,17 @@ export function filtersControl() {
           });
         });
 
-        const concur = $("#flt-concur");
-        if (concur) concur.addEventListener("change", () => {
-          view.concurrenceOnly = concur.checked;
-          // Changes which cells qualify, not just how they look, so this goes
-          // through the full path: the feature-state join, the split bands and the
-          // heat surfaces are all rebuilt from it. The panel's banner follows.
-          actions.onFilterChange();
+        CONCUR_LEVELS.forEach(({value}) => {
+          const rb = $(`#flt-concur-${value}`);
+          if (!rb) return;
+          rb.addEventListener("change", () => {
+            if (!rb.checked) return;
+            view.concurMin = value;
+            // Changes which cells qualify, not just how they look, so this goes
+            // through the full path: the feature-state join, the split bands and
+            // the heat surfaces are all rebuilt from it. The banner follows.
+            actions.onFilterChange();
+          });
         });
 
         // --- flash ---

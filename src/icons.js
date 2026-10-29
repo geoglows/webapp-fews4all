@@ -13,6 +13,7 @@ import exclamationTriangle from "heroicons/24/outline/exclamation-triangle.svg?r
 import funnel from "heroicons/24/outline/funnel.svg?raw";
 import handRaised from "heroicons/24/outline/hand-raised.svg?raw";
 import magnifyingGlass from "heroicons/24/outline/magnifying-glass.svg?raw";
+import swatch from "heroicons/24/outline/swatch.svg?raw";
 import users from "heroicons/24/outline/users.svg?raw";
 
 // Esri Calcite UI icons (@esri/calcite-ui-icons) — filled 16px glyphs.
@@ -37,6 +38,7 @@ const ICONS = {
   "funnel": funnel,
   "hand-raised": handRaised,
   "magnifying-glass": magnifyingGlass,
+  "swatch": swatch,
   "users": users,
   // Esri Calcite icons
   "basemap": calciteBasemap,

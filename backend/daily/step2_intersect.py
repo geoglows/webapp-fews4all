@@ -154,6 +154,13 @@ def load_all(input_dir, output_dir=None):
         row["status"] = C.MODEL_OK
         if dupes:
             row["notes"].append(f"{dupes} duplicate native id(s) disambiguated")
+        # The blackout box is a deliberate lie about one region, so it is recorded
+        # in the release rather than only in the log the run scrolls past.
+        if model == "geoglows" and getattr(M, "suppressed_last", 0):
+            row["suppressed"] = M.suppressed_last
+            row["notes"].append(
+                f"{M.suppressed_last} forecast(s) withheld by the GEOGLOWS blackout "
+                f"box (temporary; see config.GEOGLOWS_BLACKOUT_BOX)")
         if not found:
             # A file that exists and yields nothing is not a quiet day — a quiet
             # day still has a handful of warnings somewhere on earth. It is a

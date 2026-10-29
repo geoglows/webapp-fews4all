@@ -6,7 +6,7 @@ import {EMPHASIS, FLASH_FILL_LAYERS, FLASH_LAYERS, FLASH_SRC, FLASH_TIER, FLASH_
 import {applyLayerOrder, map, registerPointerSource, registerTooltipLayers} from "../map.js";
 import {boundsNear, boundsOf} from "../geometry.js";
 import {flashChanceLabel} from "../format.js";
-import {flashFill, flashOutline, view, visibleFlashModels, visibleTiers} from "../settings.js";
+import {flashFill, flashOutline, view, visibleTiers} from "../settings.js";
 import {rerenderPanel, setFlashProps} from "../panel.js";
 
 // Flood Hub flash-flood polygons — a global overlay (available in every dataset
@@ -327,13 +327,25 @@ export function setFlashOn(on) {
     return;
   }
   loadFlash((data) => {
-    if (!data) {           // fetch failed: back out the flood_hub flash model
-      flashOn = false;
-      visibleFlashModels.delete("flood_hub");
-      const cb = document.querySelector('.filter-dd[data-kind="flash"] input[data-model="flood_hub"]');
-      if (cb) cb.checked = false;
-      const tile = document.getElementById("tile-flash-flood_hub");
-      if (tile) tile.classList.add("hidden");
+    if (!data) {
+      // Nothing to draw for THIS release — most often because the day's run
+      // dropped flash, as 2026-10-29 did over one unreadable polygon.
+      //
+      // This used to back the model out: `flashOn = false` and flood_hub removed
+      // from `visibleFlashModels`. That made a missing day STICKY. `build()` only
+      // refetches `if (flashOn)`, so once a flashless release had switched the
+      // intent off, stepping back along the timeline to a day that did have
+      // polygons drew nothing, and the overlay could only be recovered by
+      // unticking and reticking it. The release is what is missing, not the
+      // viewer's choice, so the choice stands and the next release that has
+      // polygons shows them.
+      //
+      // Nothing is said here beyond the warning loadFlash already logged: the
+      // header states which models are absent from the release, which is the same
+      // fact in the place that is already making it.
+      FLASH_LAYERS.forEach((id) => {
+        if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "none");
+      });
       return;
     }
     ensureFlashLayers();

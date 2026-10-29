@@ -282,6 +282,34 @@ def test_round_trip(api, tmp):
     ok({x["severity"] for x in frows} == {"warning", "extreme"},
        f"likely/highly_likely map to the right rungs ({ {x['severity'] for x in frows} })")
     ok(all(x.get("_geometry") for x in frows), "each carries its geometry through")
+
+    # 2026-10-29: Flood Hub served a polygon with an EMPTY geometry. shape()
+    # accepted it and representative_point() returned POINT EMPTY rather than
+    # raising, so the throw landed on `pt.y` outside the try, escaped read_flash,
+    # and the per-model gate dropped all 92 events. One bad feature must cost one
+    # feature. Every shape below is one Flood Hub has served or plausibly can.
+    doc = json.load(open(gj))
+    good = len(doc["features"])
+    proto = doc["features"][0]
+    for bad_geom in ({"type": "Polygon", "coordinates": []},
+                     {"type": "MultiPolygon", "coordinates": []},
+                     {"type": "GeometryCollection", "geometries": []},
+                     None):
+        feat = json.loads(json.dumps(proto))
+        feat["geometry"] = bad_geom
+        doc["features"].append(feat)
+    hurt = os.path.join(tmp, "urban_flash_floods_empty.geojson")
+    json.dump(doc, open(hurt, "w"))
+    try:
+        hrows = M.read_flash(hurt)
+    except Exception as exc:
+        hrows = None
+        ok(False, f"an empty geometry must not escape read_flash ({exc})")
+    if hrows is not None:
+        ok(len(hrows) == good,
+           f"the {good} good feature(s) survive four unusable ones ({len(hrows)})")
+        ok(all(isinstance(x["lat"], float) and isinstance(x["lon"], float)
+               for x in hrows), "and every surviving row still has real coordinates")
     for pth in cps:
         os.path.exists(pth) and os.remove(pth)
 

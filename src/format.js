@@ -191,6 +191,19 @@ export function corroborated(cell, models) {
   return concurCount(cell, models) >= 2;
 }
 
+/**
+ * Whether this cell clears the agreement floor the filter is set to.
+ *
+ * `min` of 0 is the filter switched off and passes everything, including cells no
+ * model corroborates. Anything above is the same question `corroborated` asks, one
+ * rung at a time: 2 is "backed up at all", 3 is "every model saw it". One function
+ * for the cells, the heat surface and the panel's banner, because a cell that
+ * passes one and fails another is a cell you can see but cannot click.
+ */
+export function meetsConcur(cell, models, min) {
+  return !min || concurCount(cell, models) >= min;
+}
+
 // How many models share this cell — 0 when none corroborate it, otherwise the size
 // of the LARGEST co_models set that includes a model still on screen. The largest,
 // because a cell can carry several sets and the strongest agreement is the one a

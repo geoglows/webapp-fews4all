@@ -19,7 +19,6 @@ import "maplibre-gl/dist/maplibre-gl.css";  // MapLibre's own stylesheet (from n
 
 import {DATASETS} from "./config.js";
 import {loadReleaseIndex, releaseBase, resolveRelease} from "./sources.js";
-import {showRelease} from "./ui/header.js";
 import * as timeline from "./controls/timeline.js";
 import {loadRelease, loadReleaseCached} from "./release.js";
 import {map, registerPanelFocus} from "./map.js";
@@ -30,6 +29,8 @@ import * as heat from "./layers/heat.js";
 import * as flash from "./layers/flash.js";
 import * as streams from "./layers/streams.js";
 import {basemapControl} from "./controls/basemap.js";
+import * as views from "./controls/views.js";
+import {init as initViews, noteManualChange} from "./views.js";
 import {pointerControl} from "./controls/pointer.js";
 import * as display from "./controls/display.js";
 import * as filters from "./controls/filters.js";
@@ -75,11 +76,28 @@ cells.init({
 registerPanelFocus("cells", () => panel.scrollPanelToSection("section-river"));
 registerPanelFocus("flash", () => panel.scrollPanelToSection("section-flash"));
 
-display.init({onDisplayChange: applyDisplaySettings});
+// Touching either menu by hand means no named view describes the map any more,
+// so both change channels run through views.noteManualChange first. Here rather
+// than in the menus' own handlers: one place to keep right, and a control added
+// to either menu later cannot forget to do it.
+// Clearing the view also has to redraw the Views list, or reopening it would
+// still show "ON" beside a view the map stopped matching.
+const handEdit = () => { noteManualChange(); views.restate(); applyDisplaySettings(); };
+display.init({onDisplayChange: handEdit});
+// A view writes to BOTH menus, so after one lands they both have to redraw from
+// the new state or their boxes keep claiming what was ticked a moment ago.
+initViews({
+  onViewChange: () => {
+    display.restate();
+    filters.restate();
+    applyDisplaySettings();
+  },
+  setFlashOn: flash.setFlashOn,
+});
 // Switching a flash model on is the one filter that loads data rather than hiding
 // it, so it gets its own channel straight to the layer.
 filters.init({
-  onFilterChange: applyDisplaySettings,
+  onFilterChange: handEdit,
   setFlashOn: flash.setFlashOn,
 });
 
@@ -98,6 +116,9 @@ map.once("load", () => {
   // The stacked dropdowns in the top-right column. Display and Filters sit next to
   // each other: how the map is drawn, then what reaches it.
   map.addControl(basemapControl(), "top-right");
+  // Views first in the column: it is the control that writes to the two below it,
+  // and the one a reader meeting the app should find before either of them.
+  map.addControl(views.viewsControl(), "top-right");
   map.addControl(display.displayControl(), "top-right");
   map.addControl(filters.filtersControl(), "top-right");
   // Wording is fixed now that cells are the only flagged-area build.
@@ -130,7 +151,6 @@ map.once("load", () => {
     return loadReleaseCached(releaseBase(date), date)
       .then((release) => {
         if (token !== showToken) return;
-        showRelease(release, date);
         cells.swap(release);
         heat.build(release);
         flash.build(release);
@@ -149,7 +169,6 @@ map.once("load", () => {
 
   resolveRelease()
     .then(({release: name, base}) => loadRelease(base).then((release) => {
-      showRelease(release, name);
       return {release, name};
     }))
     .then(({release, name}) => {

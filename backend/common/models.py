@@ -364,6 +364,33 @@ def read_geoglows_csv(path):
     return out
 
 
+# How many forecasts the blackout box removed from the last GEOGLOWS read, so
+# step 2 can put the number in the run record. A band-aid that leaves no trace is
+# a band-aid someone will one day mistake for the map being right.
+suppressed_last = 0
+
+
+def _in_blackout(r):
+    """Is this forecast inside the GEOGLOWS blackout box?
+
+    *** TEMPORARY. See the GEOGLOWS BLACKOUT BOX block in config.py before
+    *** touching this, and do not quietly widen it.
+
+    A record with no usable coordinate answers False — it cannot be placed, so it
+    cannot be shown to be inside. The box hides real forecasts, so every doubtful
+    case must leave the map saying MORE than it should rather than less.
+    """
+    box = getattr(C, "GEOGLOWS_BLACKOUT_BOX", None)
+    if not box:
+        return False
+    try:
+        lon, lat = float(r.get("lon")), float(r.get("lat"))
+    except (TypeError, ValueError):
+        return False
+    w, s_, e, n = box
+    return w <= lon <= e and s_ <= lat <= n
+
+
 def read_geoglows(path):
     """Flooding GEOGLOWS reaches, keyed by the reach a forecast is issued against.
 
@@ -373,10 +400,26 @@ def read_geoglows(path):
     Two shapes reach this, and which one arrives is decided by the file extension
     rather than by configuration: the per-VPU parquets the bucket publishes, and
     the single-timestep CSV the earlier releases were built from.
+
+    The blackout box is applied HERE rather than in either reader, for two
+    reasons: the two shapes cannot drift apart on it, and by this point both have
+    resolved their coordinates — the CSV reader fills missing lat/lon from the
+    static reach table after its own loop, so a filter inside it would test
+    coordinates that are not there yet and let the whole region through.
     """
-    if str(path).lower().endswith(".parquet"):
-        return read_geoglows_parquet(path)
-    return read_geoglows_csv(path)
+    global suppressed_last
+    rows = (read_geoglows_parquet(path) if str(path).lower().endswith(".parquet")
+            else read_geoglows_csv(path))
+    kept = [r for r in rows if not _in_blackout(r)]
+    suppressed_last = len(rows) - len(kept)
+    if suppressed_last:
+        # Printed on EVERY run, not once, and not only when something changes.
+        # This is the reminder that the map is lying about one region on purpose.
+        box = C.GEOGLOWS_BLACKOUT_BOX
+        print(f"  *** {suppressed_last:,} GEOGLOWS forecast(s) WITHHELD — blackout "
+              f"box {box} over the v2 climatology gap. A temporary band-aid, NOT a "
+              f"fix. See config.GEOGLOWS_BLACKOUT_BOX.")
+    return kept
 
 
 def read_flood_hub(path):
@@ -669,7 +712,7 @@ def read_flash(path):
     with open(path, encoding="utf-8") as f:
         geo = json.load(f)
 
-    out = []
+    out, skipped = [], 0
     for feat in geo.get("features", []):
         props = feat.get("properties") or {}
         sev = C.FLASH_SEVERITY.get(_s(props.get("polygon_type")).lower())
@@ -677,10 +720,22 @@ def read_flash(path):
             continue
         geom = feat.get("geometry")
         if not geom:
+            skipped += 1
             continue
         try:
             pt = shape(geom).representative_point()
         except Exception:
+            skipped += 1
+            continue
+        # An EMPTY geometry does not raise above. `{"type": "Polygon",
+        # "coordinates": []}` is a truthy dict, so the `not geom` check passes it;
+        # shape() accepts it; and representative_point() hands back POINT EMPTY
+        # instead of throwing. The throw came later, at `pt.y` below, which is
+        # OUTSIDE the try -- so it escaped read_flash entirely and the per-model
+        # gate dropped flash whole. On 2026-10-29 one such polygon cost all 92
+        # events. A feature this reader cannot place is one feature, not the model.
+        if pt.is_empty:
+            skipped += 1
             continue
         issued = _s(props.get("forecastIssueTime"))
         r = blank_record()
@@ -698,6 +753,10 @@ def read_flash(path):
         })
         r["_geometry"] = geom
         out.append(r)
+    # Silent skipping is how a reader that is quietly losing most of its input
+    # looks exactly like a quiet day upstream.
+    if skipped:
+        print(f"  note: {skipped} flash feature(s) skipped — no usable geometry")
     return out
 
 
