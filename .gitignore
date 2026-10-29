@@ -30,7 +30,10 @@ Screenshots/
 vgrid/
 Software/
 Other/
-.gitignore
+# NOTE: a bare `.gitignore` rule used to sit here. It matched EVERY nested
+# .gitignore in the repo, so docs/.gitignore was silently never committed and
+# a fresh clone ignored nothing it said. This file survived only because it was
+# already tracked, and git does not ignore a tracked file. Removed 2026-10-29.
 public/
 backend/input
 backend/output

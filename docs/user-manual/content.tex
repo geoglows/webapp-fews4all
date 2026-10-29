@@ -1,0 +1,358 @@
+% Unnumbered, so the numbered sections start at Models the way the Word
+% original had them. \addcontentsline puts it in the table of contents
+% anyway, which \section* on its own does not.
+\section*{Introduction}\label{introduction}
+\addcontentsline{toc}{section}{Introduction}
+
+FEWS4All
+
+\section{Models, Data, and Packages Used}\label{models-data-and-packages-used}
+
+\subsection{Models Integrated}\label{models-integrated}
+
+FEWS4All is model-agnostic: each source is normalized to the same severity scale and drawn on the same grid.
+What differs is the geometry each publishes on, and how each decides that a threshold has been crossed.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.1603}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2778}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.5620}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Model
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Publisher
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Role in FEWS4All
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+GEOGLOWS & BYU Hydroinformatics \& the GEOGLOWS initiative (ECMWF-driven) & Global streamflow forecast on \textasciitilde7M reaches. Severity from return period; a flagged reach joins through the crosswalk to every cell it crosses, so it arrives as a line, not a point. \\
+GloFAS & Copernicus Emergency Management Service (European Commission) & Global riverine flood forecast, read from three 0.05° ensemble-count grids rather than the reporting points. One forecast per cell, taking the worst pixel in it. \\
+Flood Hub & Google & AI gauge forecasts on published severity tiers, each gauge spread onto the river reach it stands on. Also supplies the flash-flood polygons. \\
+\end{longtable}
+
+\subsection{Boundaries, Context, and Exposure Data}\label{boundaries-context-and-exposure-data}
+
+Beyond the forecasts, FEWS4All draws on open geospatial datasets for the map units, the context layer, the exposure estimates, and the base maps.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2350}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2457}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.5192}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Dataset
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Source
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Use
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+H3 (resolutions 3--6) & Uber & The map units. Resolution 6 is where everything is decided; 3--5 are rollups for zoomed-out views. Geometry is served as a PMTiles archive, one layer per resolution. \\
+GEOGLOWS V3 streams (TDX-Hydro) & GEOGLOWS & The river network context layer, served as vector tiles and filterable by Strahler order. Its topology also settles which reach speaks for a hexagon holding several. \\
+HydroRIVERS (v10) & HydroSHEDS & Flood Hub\textquotesingle s own network. Its HYBAS\_L12 column is what Flood Hub gauge ids join on, which is how a gauge is matched to the reach it sits on. \\
+geoBoundaries CGAZ (ADM0/1/2) & geoBoundaries (W\&M geoLab) & Administrative names behind each forecast\textquotesingle s ``Near'' label, cascaded ADM2 → ADM1 → ADM0. \\
+Flash-flood polygons & Google Flood Hub & Flash-flood extents on two likelihood tiers, ``likely'' and ``highly likely''. Not gridded --- they keep their own geometry end to end. \\
+Population & WorldPop & Population exposure per flagged cell. \\
+Buildings, roads, railways & OpenStreetMap & Infrastructure exposure per flagged cell. \\
+Farmland / land cover & ESA WorldCover & Farmland exposure per flagged cell. \\
+Base maps & Esri, OpenStreetMap, USGS, OpenTopoMap & Selectable background imagery (see 2.3). \\
+\end{longtable}
+
+\subsection{Software Packages}\label{software-packages}
+
+The pipeline is Python; the front end is a small Vite-built web app.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2457}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.1389}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.6154}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Package
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Side
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Use
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+h3 (h3-py) & Back end & Binning to H3 cells, parent lookups, ring searches. \\
+numpy & Back end & The HydroRIVERS topology as sorted columns with binary-search lookup; the GloFAS grids. \\
+pandas & Back end & Bulk table loads where a per-row Python loop would be too slow. \\
+netCDF4 & Back end & Reads the GloFAS ensemble-count grids. \\
+pyarrow & Back end & Streams the impact parquet layers in batches. \\
+pyogrio & Back end & Reads the geoBoundaries geopackages and the shapefiles. \\
+GDAL (ogr2ogr) & Back end & Converts cell geometry to PMTiles in the static build. \\
+MapLibre GL JS & Front end & Renders the map, its sources, layers and controls. \\
+pmtiles & Front end & Reads the tile archives over HTTP range requests. \\
+h3-js & Front end & Cell centers and boundaries, computed in the browser. \\
+Tailwind CSS & Front end & Styling of the header, side panel and controls. \\
+Vite & Front end & Bundles and serves the app; produces the deployable build. \\
+heroicons, Calcite & Front end & The inline SVG icons used across the UI. \\
+\end{longtable}
+
+\section{Interface Features}\label{interface-features}
+
+The interface is a full-screen map with a results panel on the right.
+The sections below describe each element you can interact with.
+
+\subsection{The map}\label{the-map}
+
+Flagged areas are those where at least one model forecasts flooding; the rest of the world is left as plain base map.
+Which H3 resolution is drawn follows the zoom, and the current one is reported in the bottom-left corner.
+Attribution for the base map and any context layer sits in the bottom-right.
+
+\subsection{Severity and color}\label{severity-and-color}
+
+Every model is mapped to the same three rungs, so one color scale serves all of them.
+Brightness within a ramp carries severity; hue carries which model saw it, or --- if you ask for it --- how many models agree.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.2564}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 2\tabcolsep) * \real{0.7436}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Legend item
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Meaning
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+Warning & Lowest rung: 2-year return period or greater. \\
+Danger & Middle rung: 5-year return period or greater. \\
+Extreme & Highest rung: 20-year return period or greater. \\
+2 models / 3 models & Shown only when ``Color concurrence separately'' is on. Cells that two --- or all three --- models agree on, drawn in a ramp of their own. Both start red; give them different ramps to tell the counts apart. \\
+\end{longtable}
+
+All three models open on the same amber ramp.
+While they share one, the heat map is drawn as a single surface; the moment you give a model a color of its own it gets a surface of its own, because two surfaces in the same hue would darken where they overlap and draw a seam that means nothing about the data.
+
+\subsection{Map controls}\label{map-controls}
+
+A pointer tool sits in the top-left under the zoom buttons, and three stacked icon buttons in the top-right each open a dropdown.
+Opening one closes the others, and hovering an icon shows its name.
+
+\begin{itemize}
+\item
+  \textbf{Pan / Select:} switches what a drag and a click do. Select is the normal map --- hover reads out, click fills the panel. Pan is the same map with both switched off, so dragging across the world cannot pick something up by accident.
+\item
+  \textbf{Base Map Layers:} switches the background imagery: Light grey, Dark grey, Imagery, Imagery + labels and Topographic (all Esri), Topographic (USGS), OpenStreetMap, and OpenTopoMap. The forecast overlay stays the same; only the backdrop changes.
+\item
+  \textbf{Display Options:} everything about how the map is drawn, in three tabs --- see 2.4.
+\item
+  \textbf{Filters:} everything about which forecasts reach the map --- see 2.5.
+\end{itemize}
+
+\subsection{Display Options}\label{display-options}
+
+Three tabs: River, Flash, and Context.
+A ``Restore defaults'' button at the foot returns every setting on all three to its opening value; it does not touch the filters, which have a reset of their own.
+
+\begin{itemize}
+\item
+  \textbf{River --- Flagged area type:} one checkbox, ``Draw severity as heat''. On, the cells become a blurred surface; off, they are drawn as hexagons. Whichever is on, the other\textquotesingle s settings are hidden rather than left to do nothing.
+\item
+  \textbf{River --- Colors:} one ramp per model. While the models agree on a ramp only the ``All models'' row is shown, with a link to open the three; they open themselves as soon as the ramps differ, because the summary row then reads ``Mixed''.
+\item
+  \textbf{River --- Concurrence:} ``Color concurrence separately'' gives cells that several models agree on a ramp of their own, one per count. Off by default.
+\item
+  \textbf{River --- Cells or Heat map:} whichever rendering is on. Cells offers a fill-opacity slider and an outline-only mode; the heat map offers opacity and a spread multiplier. Spread will not go below 0.7×, which is the point at which the blur is narrower than the gap between cell centers and the surface breaks into separate dots.
+\item
+  \textbf{River --- Outline weight:} the border weight of each severity rung, in pixels. Cells view only; under the heat map there is no outline to weight.
+\item
+  \textbf{Flash:} the flash overlay\textquotesingle s ramp, fill opacity, outline-only mode, and the outline weight of each tier.
+\item
+  \textbf{Context:} the GEOGLOWS V3 stream network on or off, with a density slider, and the pointer label. Density is a cut on Strahler order --- the readout names the order it keeps --- because zoomed in over one basin the whole network is a thicket. It opens keeping order 4 and above.
+\end{itemize}
+
+\subsection{Filters}\label{filters}
+
+One menu for everything that decides which forecasts are on the map, with a reset of its own.
+
+\begin{itemize}
+\item
+  \textbf{River models:} which of the three models are drawn. Switching one off takes it out of the cells, the heat surface and the side panel at once.
+\item
+  \textbf{Severity:} which of the three rungs are drawn. The legend in each panel tile follows, so it never promises a color the map is not using.
+\item
+  \textbf{Concurrence only:} displays only cells that have two or more models with warnings in the area.
+\item
+  \textbf{Flash floods:} the overlay on or off, and which of its two tiers are drawn.
+\end{itemize}
+
+\subsection{Hovering and selecting}\label{hovering-and-selecting}
+
+Moving the pointer over a flagged area lifts it --- a heavier outline and a stronger fill --- and shows a label naming the models and the severity.
+That label can be switched off under Display Options → Context; the shape still lights up and still selects.
+
+Clicking selects: the shape is outlined in white, its fill lightens so what is underneath still reads, and the results panel fills with its details.
+Under the heat map the hexagons are invisible but still clickable, and the one you pick reappears so the panel is never reporting on a cell you cannot see.
+Clicking empty map clears the selection.
+
+\subsection{The results panel}\label{the-results-panel}
+
+The panel is the detail view for the selected area, in two sections.
+
+\begin{itemize}
+\item
+  \textbf{River Floods:} one tile per model. A tile with no forecast for the selected cell sits on standby rather than disappearing, so the set of models on offer is always visible. A full tile carries the severity badge, the color key, and the forecast\textquotesingle s own fields: river or gauge id, the ``Near'' district, return period, flow, and the issued, peak and end times it publishes.
+\item
+  \textbf{Impact:} population, buildings, farmland, roads and railways inside the selected area. Folded closed by default --- it is reference rather than the reading itself.
+\item
+  \textbf{Flash Floods:} a tile per flash model, filled when a polygon is clicked.
+\end{itemize}
+
+A cell that Flood Hub did not gauge directly but which sits on a gauged reach says so: its id reads ``Filled from \textless gauge\textgreater'' and the tile notes that there is no gauge in that cell.
+Every number in such a tile describes the gauge, not the hexagon.
+
+\subsection{Model links and the flash overlay}\label{model-links-and-the-flash-overlay}
+
+Each full tile\textquotesingle s title links out to that model\textquotesingle s own application --- GEOGLOWS opens the hydroviewer at the reach, Flood Hub opens at the gauge --- so a forecast can be checked at source.
+The flash overlay is global rather than per-selection: its polygons keep their own geometry, answer the pointer the same way the hexagons do, and are drawn beneath both renderings of the cells, since they are much the larger shape and would otherwise bury them.
+
+\section{The Data Pipeline}\label{the-data-pipeline}
+
+The pipeline is split in two.
+A static tier is built once and holds everything that does not change between forecast releases --- cell geometry, the impact table, the network topologies.
+A daily tier reads one release\textquotesingle s native model files and writes the small tables the map fetches.
+The front end reads CSV and PMTiles only; it never computes geometry.
+
+\subsection{The daily run}\label{the-daily-run}
+
+Four steps, run in order from the project root.
+Each finds the current release itself and takes no arguments.
+
+\begin{itemize}
+\item
+  \textbf{step2\_intersect.py:} reads each model\textquotesingle s native file and puts every flagged forecast onto the resolution-6 grid. Points bin straight into the cell containing them; GEOGLOWS reaches join through the crosswalk to every cell they cross; Flood Hub gauges are additionally spread onto the reach they stand on. Writes forecasts.csv, cell\_forecasts.csv, and flash\_areas.geojson.
+\item
+  \textbf{step3\_compare.py:} decides agreement at resolution 6, then rolls the grid up through resolutions 5, 4 and 3. Writes cells.csv.
+\item
+  \textbf{step4\_summary.py:} joins the static impact table onto the cells and the administrative cascade onto the forecasts, adding the exposure columns and the ``Near'' district.
+\item
+  \textbf{step5\_rules.py:} writes the style tables the map reads --- which resolution is drawn at which zoom, the palettes, and the model list.
+\end{itemize}
+
+\subsection{The static build}\label{the-static-build}
+
+Rebuilt only when its inputs change, which in practice is rarely.
+A change to a forecasting rule never requires it.
+
+\begin{itemize}
+\item
+  \textbf{build\_cell\_tiles.py:} the H3 geometry archive, as PMTiles, one layer per resolution. It holds the whole universe of land cells rather than the flagged ones, so a change to which cells are flagged needs no rebuild.
+\item
+  \textbf{build\_impact\_table.py:} the per-cell exposure totals, computed once.
+\item
+  \textbf{build\_stream\_attrs.py:} river-network topology lifted out of the stream tiles, so step 2 can tell which reach speaks for a hexagon holding several.
+\item
+  \textbf{build\_hydrorivers.py:} the HydroRIVERS topology and its H3 crosswalk, used only by the Flood Hub gauge fill.
+\end{itemize}
+
+\subsection{How each model reaches the grid}\label{how-each-model-reaches-the-grid}
+
+The three river models do not publish the same kind of thing, so the area a warning covers is a property of the model\textquotesingle s geometry rather than of the flood.
+This is the set of assumptions most easily forgotten, and the one most likely to be misread off the map: a single GloFAS hexagon and a twelve-cell GEOGLOWS reach can describe flooding of the same severity.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.1816}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2564}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.5620}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+Model
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+What it publishes
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+What is flagged on the map
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+GEOGLOWS & A forecast on a river reach (a line) & Every cell the reach crosses, through the crosswalk. A warning therefore covers the whole reach it was issued on, however long that is. \\
+GloFAS & A value per 0.05° river pixel & Only the single cell containing the pixel. No spreading of any kind. \\
+Flood Hub --- gauges & A forecast at one gauge point & The gauge\textquotesingle s own cell, plus every cell crossed by the river reach that gauge stands on. The reach is filled from the gauge. \\
+Flood Hub --- flash & A polygon & Not gridded at all. The polygon keeps its own geometry end to end and is joined to the tables by forecast id. \\
+\end{longtable}
+
+\textbf{The Flood Hub fill} is the assumption worth stating plainly, because it invents map coverage that the model never published. Flood Hub reports gauges, not reaches, so a warning would otherwise land as one isolated hexagon with its own river blank. Instead the gauge is matched to a HydroRIVERS reach --- the stretch of river between two confluences --- and every cell that reach crosses is flagged with that gauge\textquotesingle s severity, times and values.
+
+\begin{itemize}
+\item
+  \textbf{Matching:} a Flood Hub gauge id is a HydroBASINS level-12 code, which HydroRIVERS carries as a column, so most gauges join by exact string match. The rest --- agency-coded gauges such as CWC, ANA, BWDB and MOI --- have no key to join on and are snapped to the nearest reach within two H3 rings, about 12 km. In the release this was written against, 67 of 99 joined by id and 32 snapped.
+\item
+  \textbf{Extent:} the gauge\textquotesingle s own reach and nothing beyond it. The fill does not walk downstream. An earlier rule did --- it followed the river to the next warned gauge and filled the span between them --- and was removed because the stretch in the middle was never observed by anything.
+\item
+  \textbf{Attribution:} a filled cell is not a gauge and does not claim to be one. It carries the gauge\textquotesingle s id prefixed with ``from'', the panel labels the row ``Filled from'', and the tile says there is no gauge in that cell. Cells that already hold a real gauge are left to that gauge.
+\item
+  \textbf{Scale:} small. In the same release, 99 gauges claimed 99 reaches and added 83 cells beyond the 99 the gauges already occupied, because a reach between two confluences crosses about two resolution-6 hexagons.
+\end{itemize}
+
+\textbf{Two cells, one hexagon.} Both of the other models can put several forecasts in one cell, and each resolves it differently. GloFAS routinely lands two or three pixels in one hexagon, and the cell keeps the worst severity among them as a single forecast, rather than listing the same warning two and three times over. GEOGLOWS instead applies the river network\textquotesingle s own rules: reaches that meet, at a junction inside the cell or anywhere downstream, collapse to the one with the greater drainage area, since that is the trunk; two reaches of the same channel collapse to the upstream one; and reaches that never meet, having different outlets, are left alone, because no single statement about the hexagon could be true of both.
+
+Where a cell ends up holding more than one model, nothing is merged.
+Each model keeps its own forecast and its own row in the panel; what the map shows for that cell is the worst severity among them, and the cell counts as corroborated for the purposes of 3.5.
+
+\subsection{How severity is decided}\label{how-severity-is-decided}
+
+Every model is mapped to the same three rungs, but each crosses its threshold in its own way.
+
+\begin{itemize}
+\item
+  \textbf{GEOGLOWS:} return period directly: 20 years or more is Extreme, 5 or more Danger, 2 or more Warning, below 2 not flagged. A reach whose routed flow is under a floor is not shown
+\item
+  \textbf{GloFAS:} three grids per cycle, one per return period, whose pixel value is how many of the 51 ensemble members exceeded that threshold. A pixel is flagged at the highest level reaching 30\% of the ensemble --- 16 members --- which is GloFAS\textquotesingle s own alert rule. The ensemble count itself is not carried through, so a marginal alert and a near-certain one are drawn alike.
+\item
+  \textbf{Flood Hub:} its published severity tiers, mapped straight across.
+\item
+  \textbf{Flash floods:} two likelihood tiers rather than a hazard magnitude, so they sit on the outer rungs: ``likely'' reads as Warning, ``highly likely'' as Extreme. That is what lets a flash cell agree with a river model instead of living in a parallel scale.
+\end{itemize}
+
+Return periods are each model\textquotesingle s own: they come from that model\textquotesingle s simulated climatology, not from gauge records, so ``20-year'' means 20-year in that model\textquotesingle s history of itself.
+
+\subsection{How agreement is decided}\label{how-agreement-is-decided}
+
+Agreement is settled at resolution 6. A coarse cell lists every model beneath it, which would claim agreement between forecasts a hundred kilometres apart; the delivered tables therefore carry a separate column holding only the model sets that genuinely share one base cell.
+Hiding a model does not make a cell stop being corroborated --- the agreement is a fact about the forecasts, not about what is currently on screen.
+
+\subsection{Outputs}\label{outputs}
+
+One folder per release under backend/output/, plus the two archives in backend/static/tiles/.
+During development Vite serves the project root, so the app resolves these paths directly; a deployment needs them served from somewhere real.
+
+\begin{longtable}[]{@{}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2671}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.2457}}
+  >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.4872}}@{}}
+\toprule\noalign{}
+\begin{minipage}[b]{\linewidth}\raggedright
+File
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Written by
+\end{minipage} & \begin{minipage}[b]{\linewidth}\raggedright
+Holds
+\end{minipage} \\
+\midrule\noalign{}
+\endhead
+\bottomrule\noalign{}
+\endlastfoot
+forecasts.csv & step 2, enriched in step 4 & One row per flagged forecast, with its model, severity, flow, times and district. \\
+cell\_forecasts.csv & step 2, rolled up in step 3 & The cell-to-forecast join, at every resolution. \\
+cells.csv & step 3, enriched in step 4 & One row per flagged cell: severity, which models, which agree, and the exposure totals. \\
+flash\_areas.geojson & step 2 & Flash-flood polygons, keyed by the same forecast id as the tables. \\
+layers.csv, palettes.csv, models.csv & step 5 & The style tables: zoom bands, color ramps, and the model list. \\
+cells.pmtiles & build\_cell\_tiles.py & H3 geometry, one layer per resolution. \\
+streams.pmtiles & build\_stream\_attrs.py inputs & The GEOGLOWS V3 stream network. \\
+\end{longtable}

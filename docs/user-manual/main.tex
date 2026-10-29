@@ -1,0 +1,85 @@
+% =============================================================================
+% FEWS4All — User Manual
+%
+%   tectonic main.tex          builds main.pdf, fetching any package it needs
+%   latexmk -pdf main.tex      if you ever install a full TeX Live instead
+%
+% The prose lives in content.tex, converted once from the Word original and
+% edited here from now on. Keep this file for the LOOK of the document and that
+% file for what it says; mixing the two is how a manual becomes unmaintainable.
+% =============================================================================
+\documentclass[11pt,a4paper]{article}
+
+% Engine-independent setup. Tectonic runs XeTeX, which wants fontspec and has no
+% use for inputenc; a full TeX Live install running pdflatex wants the opposite.
+% Branching here means the same file builds under either without being edited.
+\usepackage{iftex}
+\ifPDFTeX
+  \usepackage[T1]{fontenc}
+  \usepackage[utf8]{inputenc}
+  \usepackage{lmodern}
+\else
+  \usepackage{fontspec}
+\fi
+
+\usepackage[margin=2.5cm]{geometry}
+\usepackage{graphicx}
+\usepackage{booktabs}                 % \toprule, \midrule — not \hline
+\usepackage{longtable}                % tables that run over a page break
+\usepackage{array}
+\usepackage{calc}                     % pandoc's tables size columns with \real{}
+\usepackage{ragged2e}
+\usepackage{xcolor}
+\usepackage{microtype}
+\usepackage{fancyhdr}
+\usepackage{parskip}                  % blank line between paragraphs, no indent
+\usepackage[hidelinks]{hyperref}      % links, without the red boxes around them
+
+% Pandoc writes \tightlist into any list it converts. Defining it here rather
+% than carrying pandoc's whole preamble keeps content.tex portable.
+\providecommand{\tightlist}{%
+  \setlength{\itemsep}{0pt}\setlength{\parskip}{0pt}}
+
+\definecolor{geoblue}{HTML}{0284C7}
+\definecolor{rulegrey}{HTML}{CBD5E1}
+
+% Section headings in the app's own blue, so the manual and the thing it
+% describes look like they came from the same place.
+\usepackage{titlesec}
+\titleformat{\section}{\Large\bfseries\color{geoblue}}{\thesection}{0.6em}{}
+\titleformat{\subsection}{\large\bfseries}{\thesubsection}{0.6em}{}
+
+\pagestyle{fancy}
+\fancyhf{}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancyhead[L]{\small\textcolor{geoblue}{FEWS4All}}
+\fancyhead[R]{\small\leftmark}
+\fancyfoot[C]{\small\thepage}
+
+\hypersetup{
+  pdftitle={FEWS4All User Manual},
+  pdfauthor={BYU Hydroinformatics / GEOGLOWS},
+  pdfsubject={Multi-Model Global Flood Early Warning System},
+}
+
+\title{%
+  \vspace{-1.5cm}
+  \includegraphics[width=6cm]{images/geoglows-logo.png}\\[1.4cm]
+  {\Huge\bfseries FEWS4All}\\[0.3cm]
+  {\large\color{geoblue} Multi-Model Global Flood Early Warning System}\\[0.8cm]
+  {\LARGE User Manual}}
+\author{}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\thispagestyle{empty}
+\newpage
+
+\tableofcontents
+\newpage
+
+\input{content}
+
+\end{document}
