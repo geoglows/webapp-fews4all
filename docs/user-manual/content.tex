@@ -184,16 +184,16 @@ A view is not new capability, it is the capability named.
 \item
   \textbf{Everything:} a color per model --- GEOGLOWS orange, Flood Hub blue, GloFAS green --- with agreement in a color of its own, and the flash overlay switched on.
 \item
-  \textbf{Agreement levels:} one, two and three models agreeing, each drawn in its own color.
+  \textbf{2 models agree:} hides anything a single model saw alone. Two-model and three-model areas stay apart, in purple and red --- ``at least two'' includes three, so the stronger case is still drawn.
 \item
-  \textbf{Agreement only:} hides anything a single model saw alone; two and three stay apart.
+  \textbf{3 models agree:} only the areas every model saw, in inferno. The floor is the number of models rather than a literal three, so it still means ``all of them'' if a fourth is ever added.
 \item
   \textbf{Extreme only:} the worst rung alone, however many models saw it.
 \item
   \textbf{Flash focus:} the flash overlay on its own, river models off.
 \end{itemize}
 
-A view writes to Display Options \emph{and} Filters, because the combinations worth naming do not respect the line between them: ``Agreement only'' is a filter and a color choice and is useless as either half.
+A view writes to Display Options \emph{and} Filters, because the combinations worth naming do not respect the line between them: ``3 models agree'' is a filter and a color choice and is useless as either half.
 Each one restores both menus to their defaults first and then sets only what it is about, so a view means the same thing whatever was on screen before it.
 Touching either menu afterwards clears the name and the list reads ``Custom'' --- the map has stopped matching the label, so the label goes.
 
@@ -234,6 +234,25 @@ One menu for everything that decides which forecasts are on the map, with a rese
   \textbf{Flash floods:} the overlay on or off, and which of its two tiers are drawn.
 \end{itemize}
 
+\subsection{When a filter is hiding something}\label{filter-notices}
+
+A filter that hides most of the map has to say so, or an emptied panel reads as a quiet day --- or worse, as a broken application.
+Small notices appear at the top of each section of the results panel (\S2.9) for exactly that reason.
+
+They are grey when they are reporting a choice you made, and amber only when they are reporting something about the data.
+Most of what appears here is the first kind: you set the filter, and the notice is a reminder rather than a warning.
+
+\begin{itemize}
+\item
+  \textbf{Agreement, severity and tier filters} each name what they are hiding --- ``Warning and Danger hidden'', ``Likely hidden'' --- and say nothing when nothing is hidden.
+\item
+  \textbf{Nothing to show} appears when the filters are each doing what they say and together leave no areas at all. It replaces the individual notices rather than joining them, and lists the filters responsible.
+\item
+  \textbf{No agreement today} is the amber one. It means no area anywhere has agreement at the level being asked for --- the models are reporting normally, they simply do not overlap. It speaks only about the day: if agreement exists and your own filters have hidden it, the severity or model notice says so instead.
+\item
+  \textbf{``\ldots not in this release''} marks a model the pipeline could not use that day. The tile would otherwise sit on standby forever with nothing saying why; see \S3.5 for one standing instance of this.
+\end{itemize}
+
 \subsection{Hovering and selecting}\label{hovering-and-selecting}
 
 Moving the pointer over a flagged area lifts it --- a heavier outline and a stronger fill --- and shows a label naming the models and the severity.
@@ -248,6 +267,10 @@ Clicking empty map clears the selection.
 The panel is the detail view for the selected area, in two sections.
 When concurrence is colored separately, a \textbf{Model Agreement} key sits above the model tiles, naming each agreement count and the color drawn for it.
 It is one block rather than a row inside every tile: it describes a set of models rather than any one of them.
+It lists only the counts something on the map is actually drawn in, and collapses to a single ``2+ models'' row while the counts share a ramp.
+
+With the agreement filter on, every area that survives it is painted from the concurrence ramp, so the models\textquotesingle{} own color keys are not shown --- a key for a color the map cannot draw sends a reader looking for an orange that is not there.
+The coloured bar down the left of each tile then takes the color of the selected area itself rather than that model\textquotesingle s ramp, so the one coloured thing left in the tile agrees with the hexagon you clicked.
 
 \begin{itemize}
 \item
