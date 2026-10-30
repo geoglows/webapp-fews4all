@@ -14,7 +14,14 @@ export function basemapControl() {
         `<button type="button" class="basemap-row" data-basemap="${b.id}">` +
         `<img src="${b.thumb}" alt="" loading="lazy"><span>${b.name}</span></button>`).join("");
       const rows = [...panel.querySelectorAll(".basemap-row")];
-      const highlight = (id) => rows.forEach((r) => r.classList.toggle("basemap-selected", r.dataset.basemap === id));
+      // The selected base map was marked by a background tint and a blue ring and
+      // nothing else, so it was invisible to a screen reader and to anyone who
+      // cannot separate those two greys.
+      const highlight = (id) => rows.forEach((r) => {
+        const on = r.dataset.basemap === id;
+        r.classList.toggle("basemap-selected", on);
+        r.setAttribute("aria-current", on ? "true" : "false");
+      });
       rows.forEach((r) => r.addEventListener("click", () => {
         BASEMAPS.forEach((b) => {
           const vis = b.id === r.dataset.basemap ? "visible" : "none";

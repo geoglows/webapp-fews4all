@@ -64,6 +64,17 @@ export function noteManualChange() {
 const ONE = "blues";
 const TWO = "purples";
 const THREE = "reds";
+// The agreement views draw a small, deliberately conspicuous set of cells, so they
+// take a ramp that holds its own against the basemap rather than one chosen to sit
+// politely beside the others.
+const FULL = "inferno";
+
+// NOTE: these views briefly opened at 100% opacity, to make a handful of scattered
+// agreement cells easier to pick out. Reverted: the real problem was that `purples`
+// had the weakest light rung of the whole family, and darkening it one step on the
+// 9-class ladder bought more visibility at the default 60% (23.4 dE against the
+// basemap) than full opacity did at the old color (24.6). Opacity was treating a
+// symptom of the color.
 
 // The per-model colors "Everything" draws, by name rather than by position, so
 // they stay attached to the model whatever order PANEL_MODELS ends up in. SPARE
@@ -118,22 +129,34 @@ export const VIEWS = [
     },
   },
   {
-    id: "agreement",
-    label: "Agreement levels",
-    swatches: [ONE, TWO, THREE],
-    apply() {
-      allModels(ONE);
-      concur({2: TWO, 3: THREE});
-    },
-  },
-  {
-    id: "agree-only",
-    label: "Agreement only",
+    id: "agree-2",
+    label: "2 models agree",
     swatches: [TWO, THREE],
     apply() {
       allModels(ONE);
       concur({2: TWO, 3: THREE});
+      // The floor is 2, so a three-model cell clears it too and is still drawn --
+      // in its own red, because "at least two" includes three and hiding the
+      // stronger case would be a strange way to answer the weaker question.
       view.concurMin = 2;
+    },
+  },
+  {
+    id: "agree-3",
+    label: "3 models agree",
+    swatches: [FULL],
+    apply() {
+      // The model ramps follow the concurrence ramp here rather than staying blue.
+      // At this floor every cell on the map IS a three-model cell drawn in the
+      // concurrence ramp, so a different color in the panel's model tiles would be
+      // a legend for a color the map is not using.
+      allModels(FULL);
+      // Both counts take the same ramp: at this floor nothing below three is on
+      // the map, so a second color would be a key to something not drawn.
+      concur({2: FULL, 3: FULL});
+      // PANEL_MODELS.length rather than a literal 3, so this still means "all of
+      // them" if a fourth model is ever added.
+      view.concurMin = PANEL_MODELS.length;
     },
   },
   {

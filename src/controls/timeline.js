@@ -105,8 +105,12 @@ function render() {
 }
 
 function collapsed(r) {
+  // The triangle was a hover-only `title` wrapping an aria-hidden icon, i.e. it
+  // announced nothing at all and vanished on a touch screen. role="img" plus a
+  // real label makes the one "do not trust today's totals" signal reachable.
   const warn = isFlagged(r)
-    ? `<span class="text-amber-700" title="${tickTitle(r)}">${icon("exclamation-triangle", "text-[11px]")}</span>`
+    ? `<span class="text-amber-700" role="img" aria-label="${noteText(r)}" ` +
+      `title="${tickTitle(r)}">${icon("exclamation-triangle", "text-[11px]")}</span>`
     : "";
   return `
     <div class="pointer-events-auto mx-auto mb-6 w-fit flex items-center gap-2
@@ -163,7 +167,8 @@ function expanded(r) {
         <div class="flex-1 min-w-0">
           <div class="flex items-end justify-center gap-[3px] h-[24px]">${ticks}</div>
           <input id="tl-range" type="range" min="0" max="${last}" value="${idx}" step="1"
-                 class="w-full mt-1 accent-sky-600" aria-label="Forecast day"/>
+                 class="w-full mt-1 accent-sky-600" aria-label="Forecast day"
+                 aria-valuetext="${full(r.release)}${isFlagged(r) ? `, ${noteText(r)}` : ""}"/>
         </div>
 
         ${step("tl-next", "▶", "Next day", idx === last)}

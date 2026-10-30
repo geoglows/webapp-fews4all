@@ -36,11 +36,11 @@ export const RAMPS = [
   {id: "inferno", label: "Inferno", warning: "#f98e09", danger: "#a82e5f", extreme: "#2b0b57"},
   {id: "magma", label: "Magma", warning: "#fc8961", danger: "#a1307e", extreme: "#251255"},
   {id: "cividis", label: "Cividis", warning: "#bcae6c", danger: "#727274", extreme: "#243c6e"},
-  {id: "blues", label: "Blues", warning: "#c6dbef", danger: "#6baed6", extreme: "#2171b5"},
-  {id: "greens", label: "Greens", warning: "#c7e9c0", danger: "#74c476", extreme: "#238b45"},
-  {id: "oranges", label: "Oranges", warning: "#fdd0a2", danger: "#fd8d3c", extreme: "#d94801"},
-  {id: "purples", label: "Purples", warning: "#dadaeb", danger: "#9e9ac8", extreme: "#6a51a3"},
-  {id: "reds", label: "Reds", warning: "#fcbba1", danger: "#fb6a4a", extreme: "#cb181d"},
+  {id: "blues", label: "Blues", warning: "#6baed6", danger: "#2171b5", extreme: "#08306b"},
+  {id: "greens", label: "Greens", warning: "#a1d99b", danger: "#41ab5d", extreme: "#006d2c"},
+  {id: "oranges", label: "Oranges", warning: "#fdae6b", danger: "#f16913", extreme: "#a63603"},
+  {id: "purples", label: "Purples", warning: "#9e9ac8", danger: "#6a51a3", extreme: "#3f007d"},
+  {id: "reds", label: "Reds", warning: "#fc9272", danger: "#ef3b2c", extreme: "#a50f15"},
 ];
 
 
@@ -314,10 +314,13 @@ export const STREAM_OPACITY = [[3, 0.65], [9, 0.95]];
 // already chosen. Listed low to high; the cell takes the highest it qualifies for.
 export const CONCUR_COUNTS = [2, 3];
 export const CONCUR_LABEL = {2: "2 models", 3: "3 models"};
+// What one row stands for when the counts showing share a ramp — see the legend
+// in panel.js. Only ever used when MORE THAN ONE count is on the map; a single
+// surviving count is named by its own number.
+export const CONCUR_ANY_LABEL = "2+ models";
 // What the counts are called when they are all drawn the same and the legend has
 // nothing to tell apart. Naming each count beside an identical bar would be the
 // legend claiming a distinction the map is not making.
-export const CONCUR_ANY_LABEL = "2+ models";
 export const HEAT_CONCUR_SRC = (n) => `heat-concur-${n}-src`;
 export const HEAT_CONCUR_LAYER = (n) => `heat-concur-${n}`;
 

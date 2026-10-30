@@ -73,7 +73,8 @@ function rampRow(key, label, current, bold) {
     `<span style="flex:1;min-width:0;white-space:nowrap;overflow:hidden;` +
     `text-overflow:ellipsis${bold ? ";font-weight:600" : ""}">${label}</span>` +
     (current ? paletteSample(current) : `<span style="width:34px"></span>`) +
-    `<select class="ramp-select" data-key="${key}" style="font:inherit;padding:2px 4px;` +
+    `<select class="ramp-select" data-key="${key}" aria-label="${label} color ramp" ` +
+    `style="font:inherit;padding:2px 4px;` +
     `border:1px solid #cbd5e1;border-radius:5px;background:#fff;color:#0f172a;cursor:pointer">` +
     (current ? "" : `<option value="" selected disabled>Mixed</option>`) +
     palettes.map((p) =>
@@ -95,6 +96,7 @@ const weightRow = (k, label, width) =>
   `<div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">` +
   `<span style="width:66px;white-space:nowrap;font-weight:400">${label}</span>` +
   `<input type="range" id="disp-lw-${k}" min="0" max="5" step="0.1" value="${width}" ` +
+  `aria-label="${label} outline weight, px" ` +
   `style="flex:1;accent-color:#0284c7;cursor:pointer" title="Outline weight, px">` +
   `<span id="disp-lw-${k}-val" style="width:26px;text-align:right;color:#64748b">` +
   `${Number(width).toFixed(1)}</span></div>`;
@@ -113,6 +115,7 @@ const intRange = (id, label, value, min, max, fmt) =>
   `<label style="display:flex;align-items:center;gap:7px;margin-bottom:4px">` +
   `<span style="white-space:nowrap;width:46px">${label}</span>` +
   `<input type="range" id="${id}" min="${min}" max="${max}" step="1" ` +
+  `aria-label="${label}" aria-valuetext="${fmt(value)}" ` +
   `value="${value}" style="flex:1;accent-color:#0284c7;cursor:pointer">` +
   `<span id="${id}-val" style="width:38px;text-align:right;color:#64748b">` +
   `${fmt(value)}</span></label>`;
@@ -127,6 +130,7 @@ const pctRange = (id, label, value, min = 0, max = 100, step = 5, fmt = asPercen
   `<label style="display:flex;align-items:center;gap:7px;margin-bottom:4px">` +
   `<span style="white-space:nowrap;width:46px">${label}</span>` +
   `<input type="range" id="${id}" min="${min}" max="${max}" step="${step}" ` +
+  `aria-label="${label}" ` +
   `value="${Math.round(value * 100)}" style="flex:1;accent-color:#0284c7;cursor:pointer">` +
   `<span id="${id}-val" style="width:38px;text-align:right;color:#64748b">` +
   `${fmt(Math.round(value * 100))}</span></label>`;
@@ -137,6 +141,7 @@ const tierWeightRow = (t, label, width) =>
   `<div style="display:flex;align-items:center;gap:7px;margin-bottom:5px">` +
   `<span style="width:90px;white-space:nowrap;font-weight:400">${label}</span>` +
   `<input type="range" id="disp-flw-${t}" min="0" max="5" step="0.1" value="${width}" ` +
+  `aria-label="${label} outline weight, px" ` +
   `style="flex:1;accent-color:#0284c7;cursor:pointer" title="Outline weight, px">` +
   `<span id="disp-flw-${t}-val" style="width:26px;text-align:right;color:#64748b">` +
   `${Number(width).toFixed(1)}</span></div>`;
@@ -145,7 +150,7 @@ const slider = (id, value) =>
   `<label style="display:flex;align-items:center;gap:7px;margin-bottom:4px">` +
   `<span style="white-space:nowrap">Fill</span>` +
   `<input type="range" id="${id}" min="0" max="100" step="5" value="${Math.round(value * 100)}" ` +
-  `style="flex:1;accent-color:#0284c7;cursor:pointer">` +
+  `aria-label="Fill opacity" style="flex:1;accent-color:#0284c7;cursor:pointer">` +
   `<span id="${id}-val" style="width:30px;text-align:right;color:#64748b">` +
   `${Math.round(value * 100)}%</span></label>`;
 
@@ -297,9 +302,10 @@ export function displayControl() {
       // bar never flickers and its listener is bound a single time.
       panel.innerHTML =
         `<div id="disp-tabs" style="display:flex;gap:4px;padding:3px;margin-bottom:10px;` +
-        `background:#f1f5f9;border-radius:8px">` +
+        `background:#f1f5f9;border-radius:8px" role="tablist">` +
         TABS.map(([key, label]) =>
-          `<button type="button" class="disp-tab" data-tab="${key}" style="flex:1;border:0;` +
+          `<button type="button" class="disp-tab" data-tab="${key}" role="tab" ` +
+          `aria-selected="${key === activeTab}" style="flex:1;border:0;` +
           `padding:5px 6px;border-radius:6px;cursor:pointer;font:inherit;white-space:nowrap">${label}</button>`).join("") +
         `</div><div id="disp-body"></div>` + rule +
         resetButton("disp-reset", "Restore defaults");
@@ -310,7 +316,10 @@ export function displayControl() {
         panel.querySelectorAll(".disp-tab").forEach((b) => {
           const on = b.dataset.tab === activeTab;
           b.style.background = on ? "#fff" : "transparent";
-          b.style.color = on ? "#0f172a" : "#64748b";
+          // Inactive tab: slate-600, not slate-500 — on the #f1f5f9 tab strip the
+          // lighter step measured 4.34:1, just under AA for 12px.
+          b.style.color = on ? "#0f172a" : "#475569";
+          b.setAttribute("aria-selected", on ? "true" : "false");
           b.style.boxShadow = on ? "0 1px 2px rgb(0 0 0 / .12)" : "none";
         });
       }
@@ -361,6 +370,9 @@ export function displayControl() {
           density.addEventListener("input", () => {
             view.streamDensity = Number(density.value);
             if (readout) readout.textContent = densityLabel(view.streamDensity);
+            // The slider counts the opposite way from the order it keeps, so the
+            // raw position is meaningless read aloud; the cut is the fact.
+            density.setAttribute("aria-valuetext", densityLabel(view.streamDensity));
             applyStreamStyle();           // one setFilter; nothing refetches
           });
         }
@@ -431,6 +443,11 @@ export function displayControl() {
 
       // A percentage range bound straight onto one `view` key. Paint only — the
       // surface's geometry never changes, so none of these rebuild anything.
+      // Both of these go through actions.onDisplayChange() as well as their own
+      // paint call. Without it they were the one set of Display controls that did
+      // not clear the active View -- so dragging Fill or Opacity after applying
+      // "Flash focus" left the Views menu still marked ON for a view whose own
+      // settings had just been overwritten.
       function bindPct(range, key, fmt = asPercent) {
         if (!range) return;
         const readout = body.querySelector("#" + range.id + "-val");
@@ -438,6 +455,7 @@ export function displayControl() {
           view[key] = Number(range.value) / 100;
           if (readout) readout.textContent = fmt(Number(range.value));
           applyHeatStyle();
+          actions.onDisplayChange();
         });
       }
 
@@ -451,11 +469,13 @@ export function displayControl() {
           view[opacityKey] = Number(range.value) / 100;
           if (readout) readout.textContent = range.value + "%";
           apply();
+          actions.onDisplayChange();
         });
         outline.addEventListener("change", (e) => {
           view[outlineKey] = e.target.checked;
           range.disabled = view[outlineKey];
           apply();
+          actions.onDisplayChange();
         });
       }
 

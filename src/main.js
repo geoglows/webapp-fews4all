@@ -56,6 +56,15 @@ function refreshFlaggedAreas() {
 function applyDisplaySettings() {
   refreshFlaggedAreas();
   flash.applyFlashColors();
+  // The flash overlay's opacity, outline-only mode and per-tier visibility, and
+  // the stream network's Strahler cut, are display settings like any other -- but
+  // they were only ever re-applied by the Display menu's own reset button. So
+  // anything else that changed them left the map disagreeing with the menu: a
+  // View that restored the defaults redrew the Flash tab with "Outline only"
+  // unticked over polygons that were still unfilled, and put the density slider
+  // back to 6 over a network still drawn at 9.
+  flash.applyFlashStyle();
+  streams.applyStreamStyle();
   panel.rerenderPanel();
 }
 

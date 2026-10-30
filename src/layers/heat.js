@@ -285,12 +285,26 @@ function latScale(lat) {
 // set of colors. The first stop is fully TRANSPARENT rather than the palette's
 // lightest shade: a heat map covers the whole canvas, and an opaque low end would
 // wash over every basemap pixel the data never reached.
+// The ramp carries its OWN alpha at the low-density end, and that is separate from
+// the Opacity slider: `heatmap-opacity` scales the whole surface, while these stops
+// decide how solid each density is before that scaling. So the slider at 100% was
+// still showing a see-through surface -- not because the slider was being ignored,
+// but because density 0.30 was only ever 0.9 alpha to begin with, and most of a
+// quiet map sits below that.
+//
+// The stop at density 0 MUST stay fully transparent. It is what keeps the empty
+// four fifths of the world from being washed in the palest rung; without it the
+// heat layer tints the entire canvas.
+//
+// Everything above it now reaches full alpha early, at 0.25 rather than 0.55, so
+// the surface is solid wherever there is anything to see and translucent only on
+// the fringe where it is fading out -- which is the part that should look soft.
 function colorExpr(rampId) {
   const c = (k) => paletteColor(rampId, k);
   return ["interpolate", ["linear"], ["heatmap-density"],
     0, rgba(c("warning"), 0),
-    0.10, rgba(c("warning"), 0.35),
-    0.30, rgba(c("warning"), 0.9),
+    0.08, rgba(c("warning"), 0.45),
+    0.25, c("warning"),
     0.55, c("danger"),
     0.80, c("extreme"),
     1, darken(c("extreme"), 0.8)];

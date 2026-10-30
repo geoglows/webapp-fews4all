@@ -79,18 +79,37 @@ function enrich(feature) {
   return feature;
 }
 
+// Which fetch is the current one. Scrubbing the timeline calls build() on every
+// `input` event, so several days can be in flight at once and they do not
+// necessarily come back in order.
+let flashReq = 0;
+
 function loadFlash(cb) {
   if (flashData) return cb(flashData);
-  if (flashLoading) return;
-  if (!flashUrl) { console.warn("flash floods: no release loaded yet"); return cb(null); }
+  const url = flashUrl;
+  if (!url) { console.warn("flash floods: no release loaded yet"); return cb(null); }
+  // There used to be a `if (flashLoading) return;` here, which dropped the
+  // callback on the floor. Dragging the slider therefore left the FIRST day's
+  // fetch running while every later day bailed out -- so the old polygons landed,
+  // were enriched against the new day's forecast rows (blanking most of their
+  // fields), and were cached as if they belonged to the day on screen.
+  //
+  // Concurrent fetches are allowed instead, and only the newest is honoured. The
+  // file is ~80 kB, so the duplicate traffic during a drag is cheaper than the
+  // bookkeeping to avoid it.
+  const token = ++flashReq;
   flashLoading = true;
-  fetch(flashUrl)
+  fetch(url)
     .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then((data) => {
+      if (token !== flashReq || url !== flashUrl) return;   // a later day won
       (data.features || []).forEach(enrich);
       flashData = data; flashLoading = false; cb(data);
     })
-    .catch((err) => { flashLoading = false; console.warn("flash floods:", err.message); cb(null); });
+    .catch((err) => {
+      if (token !== flashReq) return;
+      flashLoading = false; console.warn("flash floods:", err.message); cb(null);
+    });
 }
 
 // Violet, distinct from severity (yellow/orange/red), streams (cyan) and districts
@@ -348,6 +367,9 @@ export function setFlashOn(on) {
       });
       return;
     }
+    // The overlay may have been switched off while this was in flight; showing it
+    // now would put polygons on the map with the checkbox cleared.
+    if (!flashOn) return;
     ensureFlashLayers();
     FLASH_LAYERS.forEach((id) => { if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", "visible"); });
     applyFlashStyle();   // re-hide any tier switched off under Filters

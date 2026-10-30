@@ -150,18 +150,6 @@ export function paletteColor(id, sev) {
   return (p && p[k]) || DEFAULT_COLOR;
 }
 
-/**
- * The one ramp every agreement count is drawn in, or null when they differ.
- *
- * The counts open on the same red, so this is the usual case, and it is what lets
- * the legend collapse to a single "2+ models" entry: two identical bars labelled
- * "2 models" and "3 models" would be claiming a distinction the map is not making.
- */
-export function sharedConcurRamp() {
-  const first = view.concurRamp[CONCUR_COUNTS[0]];
-  return CONCUR_COUNTS.every((n) => view.concurRamp[n] === first) ? first : null;
-}
-
 // Models whose ramp the viewer has chosen, by the Display menu or a preset.
 //
 // Every release states a palette per model, and every release load -- including

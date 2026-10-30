@@ -26,7 +26,7 @@
 //   its own zoom band, so there is no zoomend handler swapping data — the map
 //   simply stops requesting one archive and starts requesting the next.
 import {cellToBoundary, cellToLatLng} from "h3-js";
-import {CONCUR_COUNTS, EMPHASIS, EMPTY_FC, SEV_KEYS, hoverFill, selectedFill} from "../config.js";
+import {CONCUR_COUNTS, EMPHASIS, PANEL_MODELS, EMPTY_FC, SEV_KEYS, hoverFill, selectedFill} from "../config.js";
 import {applyLayerOrder, map, registerPointerSource, registerTooltipLayers, updateResReadout} from "../map.js";
 import {clipToBand, lonRange, nearestCopy} from "../geometry.js";
 import {concurCount, corroborated, meetsConcur, modelLabel, worstSeverity} from "../format.js";
@@ -78,6 +78,87 @@ function visibleForecasts(res, id) {
     if (!cell || !meetsConcur(cell, visibleModels, view.concurMin)) return [];
   }
   return fcs;
+}
+
+// The resolution agreement is settled at. A coarse cell lists every model beneath
+// it, which would claim agreement between forecasts a hundred kilometres apart, so
+// `co_models` only ever holds sets that share one of these. Counting anywhere else
+// would be counting a different thing.
+const AGREEMENT_RES = 6;
+
+// Every model, for the filter-free half of the tally above.
+const ALL_MODELS = new Set(PANEL_MODELS);
+
+/**
+ * Agreement counted two ways, because the panel asks two different questions.
+ *
+ *   drawn — areas painted in each agreement ramp RIGHT NOW, with every filter
+ *           applied. This decides whether a legend row is a key to anything: if
+ *           nothing on the map is purple, the purple row is a lie.
+ *
+ *   today — areas the models agree on AT ALL, with no filter applied. This decides
+ *           whether to say "no agreement today", which is a claim about the day
+ *           and not about the reader's current settings.
+ *
+ * They have to be separate. Hiding the Warning rung made `drawn` fall to zero and,
+ * when one number served both, produced "No agreement between all 3 models today"
+ * on a day with four three-model cells -- all of them at Warning. The agreement was
+ * there; the reader had filtered it away, and the severity banner already said so.
+ *
+ * The agreement filter is excluded from both: at level 3 it is the thing that
+ * removed the two-model cells, so asking through it is circular.
+ *
+ * Recomputed lazily and only when an input moves: the sweep is a few thousand map
+ * lookups, cheap on a filter change and wasteful on every panel render.
+ */
+let agreeTally = null;
+
+function invalidateTally() { agreeTally = null; }
+
+export function agreementTally() {
+  if (agreeTally) return agreeTally;
+  const zero = () => Object.fromEntries(CONCUR_COUNTS.map((n) => [n, 0]));
+  const drawn = zero(), today = zero();
+  // Areas the river side is drawing at all, agreement or not. The panel needs it
+  // to tell "these filters each hide something" from "these filters together hide
+  // EVERYTHING" -- the second is the one a reader mistakes for a broken app.
+  let drawnTotal = 0;
+  if (release) {
+    for (const [, cell] of release.cells) {
+      if (cell.res !== AGREEMENT_RES) continue;
+      const all = release.forecastsAt(AGREEMENT_RES, cell.h3_id);
+      if (!all.length) continue;
+      // `today` asks the release, not the reader: every model, every severity.
+      const nAll = concurCount(cell, ALL_MODELS);
+      // A three-model cell counts toward "2 or more" too — the counts nest.
+      for (const c of CONCUR_COUNTS) if (nAll >= c) today[c] += 1;
+
+      const shown = all.filter(
+        (f) => visibleModels.has(f.model) && visibleSeverities.has(f.severity));
+      if (!shown.length) continue;
+      const n = concurCount(cell, visibleModels);
+      // The agreement filter has to count here too, or "is the map empty" is
+      // answered without the filter most likely to have emptied it.
+      if (view.concurMin && n < view.concurMin) continue;
+      drawnTotal += 1;
+      for (const c of CONCUR_COUNTS) if (n >= c) drawn[c] += 1;
+    }
+  }
+  agreeTally = {drawn, today, drawnTotal};
+  return agreeTally;
+}
+
+/**
+ * What the run record says about each model in the release being drawn.
+ *
+ * The page header used to carry this -- "GloFAS not in this release" -- and it was
+ * removed when the timeline took over the date. The timeline still marks the day,
+ * but only while it is expanded, so a model that the pipeline dropped became
+ * something the app knew and never said: the tile sat on standby forever and the
+ * overlay drew nothing, with no way to find out why from the panel.
+ */
+export function releaseModelStatus() {
+  return (release && release.run && release.run.models) || {};
 }
 
 // Whether this cell is corroborated, given the models on screen. One test for the
@@ -386,6 +467,7 @@ function refreshSplits() {
 // ---- build ------------------------------------------------------------------
 
 export function build(rel) {
+  invalidateTally();
   release = rel;
   // The release decides which palettes exist and which one each model opens on.
   setPalettes(rel.rules.palettes);
@@ -475,6 +557,13 @@ export function swap(rel) {
   }
 
   release = rel;
+  // AFTER the swap, never before. clearSelection() above fires onClear, which
+  // re-renders the panel, which asks for the tally -- so invalidating at the top
+  // of this function just rebuilt the cache from the day being replaced, and the
+  // new day inherited yesterday's agreement counts. The legend then showed rows
+  // for agreement the day does not have, or claimed "no agreement today" over a
+  // day with 363 agreeing cells, until the next filter change happened to clear it.
+  invalidateTally();
   setPalettes(rel.rules.palettes);
   setModelPalettes(rel.rules.models);
 
@@ -653,6 +742,7 @@ export function applyFillStyle() { refresh({rejoin: false}); }
 
 export function refresh({rejoin = true} = {}) {
   if (!release) return;
+  invalidateTally();
   for (const layer of release.rules.layers || []) {
     const res = Number(String(layer.id).split("-").pop());
     // Re-apply every property of every layer from the one definition, rather than

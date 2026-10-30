@@ -436,26 +436,59 @@ PALETTES = [
     # which is at or below the threshold where a color registers at all — so a
     # `warning` cell was, in practice, an unpainted one.
     #
-    # Shifting all three rungs one notch up the 9-class ladder puts that swatch at
-    # 4.3 to 8.8 dE and leaves every neighbouring pair 7.0 to 11.8 dE apart, where
-    # before the span was 5.4 to 12.7 — so the low end roughly doubled in presence
-    # without any rung crowding its neighbour. All three got deeper, not just the
-    # first: lifting `warning` alone squeezed the gap to `danger` down to 3.2 dE
-    # on blues and purples, which is its own kind of unreadable.
+    # Shifted TWICE, for the same reason both times. Positions 3/5/7 were still too
+    # pale at the light end to read on the PANEL, where the legend sits on white
+    # paper rather than over the basemap: purples' `warning` was 15.3 dE from bare
+    # paper and blues' 18.4, and composited at the default 30% fill over the map
+    # they were 3.5 and 4.6 dE from the bare basemap — at or below the threshold
+    # where a color registers at all.
+    #
+    # At 4/6/8 the worst light rung is 28.0 dE on paper and 7.1 dE on the map, so
+    # the low end roughly doubled in presence again, while the closest neighbouring
+    # pair is still 23.6 dE apart. Going one further, to 5/7/9, would buy another
+    # 15 dE at the light end but push `extreme` to near-black (#08306b, #00441b),
+    # where the hue that tells the ramps apart is gone.
+    #
+    # All three rungs move together, never just the first: lifting `warning` alone
+    # squeezed its gap to `danger` down to 3.2 dE on blues and purples, which is
+    # its own kind of unreadable.
+    #
+    # The matplotlib family above was measured at the same time and left alone --
+    # its weakest light rung (cividis) is already 46.2 dE on paper and 12.7 on the
+    # map, and every sampling that darkened it made the rung gaps worse.
     #
     # They still run dark-is-worst, which is ColorBrewer's own convention and the
     # readable one here — the palest rung belongs on `warning`, where being quiet
     # costs nothing, not on `extreme`.
+    # Blues joins purples one rung lower (9-class 5/7/9). It was the weakest light
+    # rung left after purples moved -- 20.2 dE against the basemap at the default
+    # 60% heat opacity -- and it is the ramp the agreement views give the models,
+    # so it is read beside that purple rather than instead of it.
+    #
+    # Its `extreme` is now #08306b, which IS close to black (L* 19). Accepted here
+    # and not for greens or oranges: blues is only ever the quiet end of an
+    # agreement view, where the eye is meant to go to the purple and the red, and a
+    # near-black `extreme` on a model ramp reads as emphasis rather than as a lost
+    # hue. If the three-rung blues bar ever has to be told apart on its own, this is
+    # the first thing to put back.
     {"id": "blues", "label": "Blues",
-     "warning": "#c6dbef", "danger": "#6baed6", "extreme": "#2171b5"},
+     "warning": "#6baed6", "danger": "#2171b5", "extreme": "#08306b"},
     {"id": "greens", "label": "Greens",
-     "warning": "#c7e9c0", "danger": "#74c476", "extreme": "#238b45"},
+     "warning": "#a1d99b", "danger": "#41ab5d", "extreme": "#006d2c"},
     {"id": "oranges", "label": "Oranges",
-     "warning": "#fdd0a2", "danger": "#fd8d3c", "extreme": "#d94801"},
+     "warning": "#fdae6b", "danger": "#f16913", "extreme": "#a63603"},
+    # Purples alone sits one rung LOWER on the ladder than its four siblings
+    # (9-class 5/7/9 rather than 4/6/8). It carries agreement rather than a model,
+    # so it is the one ramp a reader goes looking for on purpose, and at 4/6/8 it
+    # had the weakest light rung of the family: 14.7 dE against the basemap at the
+    # default 60% heat opacity, where the next worst was blues at 20.2. At 5/7/9 it
+    # is 23.4, and its rung gaps (35.5 / 32.9) are the healthiest of the set. Its
+    # 9th class is a deep violet rather than the near-black the other schemes reach,
+    # which is why this step works here and not for blues or greens.
     {"id": "purples", "label": "Purples",
-     "warning": "#dadaeb", "danger": "#9e9ac8", "extreme": "#6a51a3"},
+     "warning": "#9e9ac8", "danger": "#6a51a3", "extreme": "#3f007d"},
     {"id": "reds", "label": "Reds",
-     "warning": "#fcbba1", "danger": "#fb6a4a", "extreme": "#cb181d"},
+     "warning": "#fc9272", "danger": "#ef3b2c", "extreme": "#a50f15"},
 ]
 DEFAULT_PALETTE = "oranges"
 # Every model opens on the same palette. Models are told apart by the split-cell

@@ -29,7 +29,11 @@ export const radio = (name, id, label, on) =>
 
 /** Explanatory small print under a control. `top` is its margin above, in px. */
 export const note = (text, top = 5) =>
-  `<p style="font:400 11px system-ui,sans-serif;color:#94a3b8;margin:${top}px 0 0;` +
+  // #64748b (slate-500), not #94a3b8 (slate-400): on the white menu panels that
+// was 2.56:1, well under the 4.5:1 AA wants for 11px text. This helper is the
+// small print in Views, Filters and all three Display tabs, so it was the most
+// repeated instance of the problem in the app.
+  `<p style="font:400 11px system-ui,sans-serif;color:#64748b;margin:${top}px 0 0;` +
   `line-height:1.45">${text}</p>`;
 
 /** The full-width button a menu's own reset sits in. */

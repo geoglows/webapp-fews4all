@@ -18,10 +18,18 @@ export function dropdownControl(opts) {
   const panelAnchor = openRight ? "left:34px" : "right:34px";
   const tipAnchor = openRight ? "left:36px" : "right:36px";
   let container = null, panel = null, closeOnDoc = null;
-  const close = () => { if (panel && !panel.hidden) panel.hidden = true; };
+  // aria-expanded travels with the panel's hidden state. Without it the button is
+  // announced as a plain "Filters button" with no hint that it opens anything, and
+  // no way to tell whether it is already open.
+  let btnRef = null;
+  const setExpanded = () => {
+    if (btnRef) btnRef.setAttribute("aria-expanded", panel && !panel.hidden ? "true" : "false");
+  };
+  const close = () => { if (panel && !panel.hidden) panel.hidden = true; setExpanded(); };
   function toggle() {
     if (panel.hidden) { closeOtherDropdowns(close); panel.hidden = false; }
-    else close();
+    else panel.hidden = true;
+    setExpanded();
   }
   return {
     onAdd() {
@@ -31,6 +39,9 @@ export function dropdownControl(opts) {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.setAttribute("aria-label", opts.title);
+      btn.setAttribute("aria-haspopup", "true");
+      btn.setAttribute("aria-expanded", "false");
+      btnRef = btn;
       btn.style.cssText = "display:flex;align-items:center;justify-content:center;width:29px;height:29px;cursor:pointer;background:none;border:0";
       btn.innerHTML = icon(opts.iconName, "text-[19px] text-slate-700");
       panel = document.createElement("div");
