@@ -1,3 +1,10 @@
+% !TEX root = main.tex
+%
+% This file is \input by main.tex and has no preamble of its own, so it cannot
+% be built on its own. The line above tells the editor which file IS the root,
+% so building or previewing from here acts on main.tex. Any further section
+% files added later need the same line.
+
 % Unnumbered, so the numbered sections start at Models the way the Word
 % original had them. \addcontentsline puts it in the table of contents
 % anyway, which \section* on its own does not.
@@ -33,6 +40,8 @@ GEOGLOWS & BYU Hydroinformatics \& the GEOGLOWS initiative (ECMWF-driven) & Glob
 GloFAS & Copernicus Emergency Management Service (European Commission) & Global riverine flood forecast, read from three 0.05° ensemble-count grids rather than the reporting points. One forecast per cell, taking the worst pixel in it. \\
 Flood Hub & Google & AI gauge forecasts on published severity tiers, each gauge spread onto the river reach it stands on. Also supplies the flash-flood polygons. \\
 \end{longtable}
+
+GEOGLOWS forecasts are currently withheld over one region --- see \S3.5, \emph{A known gap: withheld GEOGLOWS forecasts}, for what is removed and why.
 
 \subsection{Boundaries, Context, and Exposure Data}\label{boundaries-context-and-exposure-data}
 
@@ -140,7 +149,7 @@ While they share one, the heat map is drawn as a single surface; the moment you 
 
 \subsection{Map controls}\label{map-controls}
 
-A pointer tool sits in the top-left under the zoom buttons, and three stacked icon buttons in the top-right each open a dropdown.
+A pointer tool sits in the top-left under the zoom buttons, and four stacked icon buttons in the top-right each open a dropdown.
 Opening one closes the others, and hovering an icon shows its name.
 
 \begin{itemize}
@@ -149,10 +158,37 @@ Opening one closes the others, and hovering an icon shows its name.
 \item
   \textbf{Base Map Layers:} switches the background imagery: Light grey, Dark grey, Imagery, Imagery + labels and Topographic (all Esri), Topographic (USGS), OpenStreetMap, and OpenTopoMap. The forecast overlay stays the same; only the backdrop changes.
 \item
-  \textbf{Display Options:} everything about how the map is drawn, in three tabs --- see 2.4.
+  \textbf{Views:} named combinations of the two menus below, applied in one click --- see 2.4.
 \item
-  \textbf{Filters:} everything about which forecasts reach the map --- see 2.5.
+  \textbf{Display Options:} everything about how the map is drawn, in three tabs --- see 2.5.
+\item
+  \textbf{Filters:} everything about which forecasts reach the map --- see 2.6.
 \end{itemize}
+
+\subsection{Views}\label{views}
+
+Everything a view does can be reached by hand in the two menus below it.
+The point is that reaching a useful combination means knowing which four controls across two menus to touch, and in what order; most readers never discover that the map can answer ``where do all three models agree'' at all.
+A view is not new capability, it is the capability named.
+
+\begin{itemize}
+\item
+  \textbf{Default:} severity everywhere, every model, nothing hidden. What the app opens on.
+\item
+  \textbf{Everything:} a color per model --- GEOGLOWS orange, Flood Hub blue, GloFAS green --- with agreement in a color of its own, and the flash overlay switched on.
+\item
+  \textbf{Agreement levels:} one, two and three models agreeing, each drawn in its own color.
+\item
+  \textbf{Agreement only:} hides anything a single model saw alone; two and three stay apart.
+\item
+  \textbf{Extreme only:} the worst rung alone, however many models saw it.
+\item
+  \textbf{Flash focus:} the flash overlay on its own, river models off.
+\end{itemize}
+
+A view writes to Display Options \emph{and} Filters, because the combinations worth naming do not respect the line between them: ``Agreement only'' is a filter and a color choice and is useless as either half.
+Each one restores both menus to their defaults first and then sets only what it is about, so a view means the same thing whatever was on screen before it.
+Touching either menu afterwards clears the name and the list reads ``Custom'' --- the map has stopped matching the label, so the label goes.
 
 \subsection{Display Options}\label{display-options}
 
@@ -165,7 +201,7 @@ A ``Restore defaults'' button at the foot returns every setting on all three to 
 \item
   \textbf{River --- Colors:} one ramp per model. While the models agree on a ramp only the ``All models'' row is shown, with a link to open the three; they open themselves as soon as the ramps differ, because the summary row then reads ``Mixed''.
 \item
-  \textbf{River --- Concurrence:} ``Color concurrence separately'' gives cells that several models agree on a ramp of their own, one per count. Off by default.
+  \textbf{River --- Concurrence:} ``Color concurrence separately'' gives cells that several models agree on a ramp of their own, one per agreement count, so two models agreeing and three models agreeing can be told apart at a glance. Off by default, and while the counts share a ramp the legend collapses to a single ``2+ models'' entry rather than claiming a distinction the map is not drawing.
 \item
   \textbf{River --- Cells or Heat map:} whichever rendering is on. Cells offers a fill-opacity slider and an outline-only mode; the heat map offers opacity and a spread multiplier. Spread will not go below 0.7×, which is the point at which the blur is narrower than the gap between cell centers and the surface breaks into separate dots.
 \item
@@ -186,7 +222,7 @@ One menu for everything that decides which forecasts are on the map, with a rese
 \item
   \textbf{Severity:} which of the three rungs are drawn. The legend in each panel tile follows, so it never promises a color the map is not using.
 \item
-  \textbf{Concurrence only:} displays only cells that have two or more models with warnings in the area.
+  \textbf{Agreement:} the floor a cell must clear to stay on the map --- ``Any'', ``2 models or more agree'', or ``All 3 models agree''. Agreement is counted across the models ticked above. The panel announces whichever level is in force, because an almost empty map otherwise reads as a quiet day rather than as a filter.
 \item
   \textbf{Flash floods:} the overlay on or off, and which of its two tiers are drawn.
 \end{itemize}
@@ -203,6 +239,8 @@ Clicking empty map clears the selection.
 \subsection{The results panel}\label{the-results-panel}
 
 The panel is the detail view for the selected area, in two sections.
+When concurrence is colored separately, a \textbf{Model Agreement} key sits above the model tiles, naming each agreement count and the color drawn for it.
+It is one block rather than a row inside every tile: it describes a set of models rather than any one of them.
 
 \begin{itemize}
 \item
@@ -220,6 +258,18 @@ Every number in such a tile describes the gauge, not the hexagon.
 
 Each full tile\textquotesingle s title links out to that model\textquotesingle s own application --- GEOGLOWS opens the hydroviewer at the reach, Flood Hub opens at the gauge --- so a forecast can be checked at source.
 The flash overlay is global rather than per-selection: its polygons keep their own geometry, answer the pointer the same way the hexagons do, and are drawn beneath both renderings of the cells, since they are much the larger shape and would otherwise bury them.
+
+\subsection{Browsing past days}\label{browsing-past-days}
+
+A pill at the foot of the map carries the date being drawn.
+Clicking it opens a timeline across every release the pipeline has published, with step buttons either side, a scrubber, and a play button that runs through the days in order.
+Switching day swaps the forecasts on the tiles that are already loaded, so stepping and playback do not rebuild the map.
+
+Each day has a tick, and a day the pipeline published without one of its models is drawn amber rather than hidden, with the missing models named on hover.
+Hiding those days would be its own kind of lie: played back unmarked, a day carrying one model looks like warnings halving and recovering, which reads as weather and is not.
+A model that arrived but carried far fewer forecasts than its own recent median is marked the same way and labelled ``thin'' --- the volume guard's way of saying a download may have been half a download.
+
+The date and the missing-model note live here rather than in the page header, which is why the header carries only the title.
 
 \section{The Data Pipeline}\label{the-data-pipeline}
 
@@ -321,6 +371,26 @@ Every model is mapped to the same three rungs, but each crosses its threshold in
 \end{itemize}
 
 Return periods are each model\textquotesingle s own: they come from that model\textquotesingle s simulated climatology, not from gauge records, so ``20-year'' means 20-year in that model\textquotesingle s history of itself.
+
+\subsection{A known gap: withheld GEOGLOWS forecasts}\label{withheld-geoglows}
+
+\notebox{\textbf{GEOGLOWS forecasts are currently withheld over Finland and Russian Karelia, and real flooding there will not be reported by that model.} The other three models report over the region normally.}
+
+That return period is where the problem starts.
+Because it is drawn from the model\textquotesingle s own simulated history, it depends on the retrospective record and the forecast climatology meeting cleanly --- and in some regions they do not.
+This inflates the forecast return period, so a reach that is actually not experiencing extreme flows can be flagged as Extreme for an indefinite number of days.
+
+Finland and Russian Karelia are the clearest instance found so far.
+Across the ten releases held when this was written --- 23 September to 29 October 2026, thirty-six days apart end to end --- 1,379 reaches in that region were flagged on \emph{every single one}, and three quarters of them reported the same severity every day.
+Floods end; these did not.
+
+Until the climatology is corrected, every GEOGLOWS forecast between 17°E and 45°E and between 57°N and 71°N is removed from the release before anything else sees it.
+It is not drawn, not counted toward agreement, and not listed in the panel.
+That removes roughly half of GEOGLOWS\textquotesingle s global output, which is less a measure of the blackout than of the defect behind it: one region the size of Finland was producing half of every GEOGLOWS flood warning on earth.
+
+This is a stopgap and not a correction.
+It hides real forecasts along with the inflated ones, it is a blunt rectangle rather than a judgement about any particular river, and it should be removed as soon as the underlying climatology is rebuilt.
+The region to suppress is set in one place in the pipeline configuration, every run records how many forecasts it withheld, and the run log says so on every single run so that the state cannot quietly become permanent.
 
 \subsection{How agreement is decided}\label{how-agreement-is-decided}
 

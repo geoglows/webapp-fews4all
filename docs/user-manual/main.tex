@@ -42,6 +42,19 @@
 
 \definecolor{geoblue}{HTML}{0284C7}
 \definecolor{rulegrey}{HTML}{CBD5E1}
+\definecolor{noteedge}{HTML}{B45309}
+\definecolor{notefill}{HTML}{FFFBEB}
+
+% A framed callout, for the handful of things a reader must not skim past.
+% Built from \fcolorbox and \parbox, which are core LaTeX, rather than pulling in
+% tcolorbox or mdframed -- this document is meant to build anywhere, including on
+% a machine where tectonic is fetching packages over a hotel wifi.
+\newcommand{\notebox}[1]{%
+  \par\medskip\noindent
+  \fcolorbox{noteedge}{notefill}{%
+    \parbox{\dimexpr\linewidth-2\fboxsep-2\fboxrule\relax}{%
+      \vspace{2pt}#1\vspace{2pt}}}%
+  \par\medskip}
 
 % Section headings in the app's own blue, so the manual and the thing it
 % describes look like they came from the same place.

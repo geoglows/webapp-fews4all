@@ -30,6 +30,11 @@ Screenshots/
 vgrid/
 Software/
 Other/
+# Where the Claude desktop app drops files delivered from a chat session. It is
+# recreated at the repo root every time one arrives, so this is a standing rule
+# rather than something to clean up by hand. Nothing in it is a source: if a
+# delivered file matters, move it into the folder it belongs to.
+Claude outputs/
 # NOTE: a bare `.gitignore` rule used to sit here. It matched EVERY nested
 # .gitignore in the repo, so docs/.gitignore was silently never committed and
 # a fresh clone ignored nothing it said. This file survived only because it was
