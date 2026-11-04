@@ -425,7 +425,9 @@ The region to suppress is set in one place in the pipeline configuration, every 
 \subsection{How agreement is decided}\label{how-agreement-is-decided}
 
 Agreement is settled at resolution 6. A coarse cell lists every model beneath it, which would claim agreement between forecasts a hundred kilometres apart; the delivered tables therefore carry a separate column holding only the model sets that genuinely share one base cell.
-Hiding a model does not make a cell stop being corroborated --- the agreement is a fact about the forecasts, not about what is currently on screen.
+Agreement is counted across the models currently shown, and every model of an agreeing set has to be one of them.
+Switch GloFAS off and a cell GEOGLOWS and GloFAS agreed on stops being drawn as agreement --- it would otherwise sit on the map in the concurrence color while the panel listed a single model, which reads as a fault however carefully it is explained.
+The consequence is worth knowing: with only one model shown, no cell can clear the agreement filter at all, because agreement between two models is not something one model can demonstrate.
 
 \subsection{Outputs}\label{outputs}
 

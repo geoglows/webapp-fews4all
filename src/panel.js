@@ -504,12 +504,11 @@ export function renderPanel(props) {
             "All three rungs are off — nothing can be drawn. Filters → Severity."))
     : "";
 
-  // #3: agreement is a fact about the FORECASTS, so a cell still qualifies when
-  // the model corroborating it is switched off. Deliberate, documented, and
-  // baffling on screen -- single-model cells apparently surviving a filter that
-  // says it removes them. Said out loud only when it can actually bite.
+  // This used to carry " Agreement counts models you've hidden." -- true while
+  // concurCount used a `some` rule, and false since it moved to `every`. A cell
+  // now needs every model of its agreeing set on screen, so hiding one removes the
+  // agreement rather than leaving it drawn in a color the panel cannot explain.
   const hiddenModels = PANEL_MODELS.filter((m) => !visibleModels.has(m));
-  const partnerNote = hiddenModels.length ? " Agreement counts models you've hidden." : "";
   const concurNoticeHtml = view.concurMin && tally.today[view.concurMin]
     ? notice("info",
         view.concurMin >= PANEL_MODELS.length
@@ -517,7 +516,7 @@ export function renderPanel(props) {
           : `${view.concurMin}+ models agree`,
         (view.concurMin >= PANEL_MODELS.length
           ? "Areas fewer models saw are hidden."
-          : "Areas a single model saw alone are hidden.") + partnerNote)
+          : "Areas a single model saw alone are hidden."))
     : "";
 
   // #1: a model the pipeline dropped from this release. The app knew and never

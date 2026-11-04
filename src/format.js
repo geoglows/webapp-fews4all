@@ -174,18 +174,11 @@ export function fillSource(fc) {
 }
 
 // Whether this cell IS corroborated, given the models currently shown — two or
-// more agree on it, and at least one of them is on screen.
+// more agree on it, and ALL of them are on screen.
 //
 // `co_models` and not `models`: step 3 fills it only with the model sets that
 // genuinely share one BASE cell, where a coarse cell's `models` lists everything
 // beneath it and would claim agreement between models a hundred kilometres apart.
-//
-// `some`, not `every`. A stricter test asked whether the agreement was VISIBLE, and
-// it made the "Concurrence only" filter unsatisfiable the moment you narrowed to one
-// model: every co_models set has two or more members, so `every` could never pass
-// and the map went silently empty. Measured on one release, filtering to Flood Hub
-// alone: 0 cells under `every`, 611 under `some`. Being corroborated does not stop
-// being true because the corroborating model is hidden.
 //
 export function corroborated(cell, models) {
   return concurCount(cell, models) >= 2;
@@ -205,17 +198,34 @@ export function meetsConcur(cell, models, min) {
 }
 
 // How many models share this cell — 0 when none corroborate it, otherwise the size
-// of the LARGEST co_models set that includes a model still on screen. The largest,
-// because a cell can carry several sets and the strongest agreement is the one a
-// reader is being shown; it is also what keeps the count monotone, so a cell can
-// never read as "2 models" while a three-way set sits in the same row.
+// of the LARGEST co_models set whose models are ALL on screen. The largest, because
+// a cell can carry several sets and the strongest agreement is the one a reader is
+// being shown; it is also what keeps the count monotone, so a cell can never read
+// as "2 models" while a three-way set sits in the same row.
 //
-// Same `some` rule as above, and for the same measured reason: agreement does not
-// stop being true because the corroborating model is hidden.
+// `every`, not `some` — and this was the other way round until 2026-11-02.
+//
+// The old rule asked whether agreement EXISTED; this one asks whether it is on
+// screen. Switching GloFAS off used to leave its agreement drawn in the
+// concurrence color, so the map showed a purple cell and the panel showed one
+// model, which reads as a bug however carefully it is explained.
+//
+// `some` was chosen for a real reason: `every` makes the agreement filter
+// unsatisfiable at one visible model — every co_models set has two or more members
+// — and the map went SILENTLY empty. That reason has since expired. An emptied map
+// now says so: "Nothing to show" names the filters responsible, and "No agreement
+// today" distinguishes a quiet day from a filtered one. Silence was the problem,
+// not emptiness.
+//
+// Measured on 2026-11-02, res-6 cells with 2+ agreement: with all three models
+// visible the two rules are identical at 576. They part only when something is
+// hidden — GloFAS off gives 8 under `every` against 576 under `some`, and a single
+// visible model gives 0, which is the honest answer to "where do two models agree"
+// when only one is being shown.
 export function concurCount(cell, models) {
   let best = 0;
   for (const set of cell.co_models || []) {
-    if (set.length >= 2 && set.length > best && set.some((m) => models.has(m))) {
+    if (set.length >= 2 && set.length > best && set.every((m) => models.has(m))) {
       best = set.length;
     }
   }
