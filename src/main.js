@@ -155,16 +155,22 @@ map.once("load", () => {
   // loads at once, and without it a slow early day could land after a fast later
   // one and leave the map showing a date the header disagrees with.
   let showToken = 0;
-  function showDay(date) {
+  // A frame is {release, day}: a past release at day 0, or one of this release's
+  // forecast days. The cache key carries both, because the same release has a
+  // different map on every day of its horizon.
+  const frameKey = (f) => `${f.release}#${f.day | 0}`;
+
+  function showDay(frame) {
+    const f = typeof frame === "string" ? {release: frame, day: 0} : frame;
     const token = ++showToken;
-    return loadReleaseCached(releaseBase(date), date)
+    return loadReleaseCached(releaseBase(f.release), frameKey(f), f.day | 0)
       .then((release) => {
         if (token !== showToken) return;
         cells.swap(release);
         heat.build(release);
         flash.build(release);
         panel.rerenderPanel();
-        timeline.setCurrent(date);
+        timeline.setCurrent(f.release, f.day | 0);
       })
       .catch(panel.panelError);
   }
@@ -173,7 +179,9 @@ map.once("load", () => {
     show: showDay,
     // Warm the cache without touching the map, so playback does not stall on a
     // fetch it could have started a second earlier.
-    prefetch: (date) => { loadReleaseCached(releaseBase(date), date).catch(() => {}); },
+    prefetch: (f) => {
+      loadReleaseCached(releaseBase(f.release), frameKey(f), f.day | 0).catch(() => {});
+    },
   });
 
   resolveRelease()
@@ -192,7 +200,9 @@ map.once("load", () => {
       panel.rerenderPanel();
       // The timeline is the last thing to arrive and the only optional one: a
       // deployment without releases.json simply never gets a bar.
-      loadReleaseIndex().then((index) => timeline.build(index, name));
+      // The run record is what tells the bar how far the forecast half reaches
+      // and which models get there; without it the bar is retrospective only.
+      loadReleaseIndex().then((index) => timeline.build(index, name, release.run));
     })
     .catch(panel.panelError);
   // Flash models default to on, so draw their polygons at startup.

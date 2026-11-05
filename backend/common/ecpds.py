@@ -1,9 +1,10 @@
 """GloFAS, from ECMWF's Auxiliary Data Store over HTTPS.
 
-Eight files a cycle: three sumAL alert grids and a five-part RPG_U shapefile,
-about 126 MB in total — close enough to the GEOGLOWS fetch that this module is
-shaped like that one rather than like the Flood Hub client. List nothing, parse
-no JSON, just take the files a dated folder owes us.
+Eleven files a cycle: three sumAL alert grids, three summary_alerts lead-band
+grids and a five-part RPG_U shapefile, about 198 MB in total — close enough to
+the GEOGLOWS fetch that this module is shaped like that one rather than like the
+Flood Hub client. List nothing, parse no JSON, just take the files a dated
+folder owes us.
 
 FINDING THE CYCLE BY PROBING, NOT BY LISTING
 

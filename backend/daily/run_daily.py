@@ -44,7 +44,8 @@ from common import manifest as MAN      # noqa: E402
 import step2_intersect                  # noqa: E402
 import step3_compare                    # noqa: E402
 import step4_summary                    # noqa: E402
-import step5_rules                      # noqa: E402
+import step5_rules
+import step6_days                      # noqa: E402
 
 
 def rule(title):
@@ -97,6 +98,9 @@ def main(input_dir=None, keep_staging=False):
 
     rule("Step 5 — style tables")
     step5_rules.main(staged)
+
+    rule("Step 6 — split into forecast days")
+    step6_days.main(staged)
 
     rule(f"Publishing {release}")
     live = promote(staged, os.path.join(root, release))

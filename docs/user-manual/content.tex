@@ -289,6 +289,32 @@ Every number in such a tile describes the gauge, not the hexagon.
 Each full tile\textquotesingle s title links out to that model\textquotesingle s own application --- GEOGLOWS opens the hydroviewer at the reach, Flood Hub opens at the gauge --- so a forecast can be checked at source.
 The flash overlay is global rather than per-selection: its polygons keep their own geometry, answer the pointer the same way the hexagons do, and are drawn beneath both renderings of the cells, since they are much the larger shape and would otherwise bury them.
 
+\subsection{The forecast timeline}\label{forecast-timeline}
+
+The bar at the foot of the map runs in two directions.
+Behind today are the releases the pipeline has already published; ahead of it are the forecast days of today\textquotesingle s release.
+It opens on the join between them, which is today, and a green tick marks that day so it can be found again after scrubbing.
+
+The four models do not mean the same thing by ``a forecast day'', and Figure~\ref{fig:forecast-timeline} is the whole of that difference on one axis.
+GEOGLOWS resolves individual days and reports one 3-hourly step on each of them.
+GloFAS resolves three lead bands rather than days, so its map changes three times across the bar instead of sixteen.
+Flood Hub publishes a window per gauge, usually one or two days wide, somewhere in the first week.
+Flash floods cover the next 24 hours.
+That window crosses midnight more often than not --- a warning issued at six in the evening runs to six tomorrow evening --- so they are drawn on today and tomorrow, and never further.
+
+\input{figures/forecast-timeline}
+
+A day earns a place on the bar only if some forecast \emph{names} it.
+That is the distinction the figure draws as solid against dashed: a GEOGLOWS step names its day, a GloFAS band names the days in its range, a Flood Hub window names the days it covers --- while a GloFAS pixel with no band, or a gauge that published no window, is drawn on every day without naming any of them.
+Days past the last named one would redraw the day before them unchanged, so they get no tick at all; offering a step that changes nothing is worse than not offering it.
+
+This is why the bar\textquotesingle s length moves on its own.
+With the products described here it reaches day 15, set by GloFAS\textquotesingle s last band, and it would reach further the day a model published further without anything being edited to allow it.
+
+Two consequences are worth stating plainly, because both look like faults and neither is.
+Days inside one GloFAS band draw the same GloFAS rows, so stepping from day 11 to day 12 moves nothing in that model --- three bands cannot produce five different days.
+And a model is hidden on days past its own horizon rather than drawn empty, with a note in the panel saying which model and why, so that ``no warnings'' and ``cannot see this far'' are never left looking alike.
+
 \subsection{Browsing past days}\label{browsing-past-days}
 
 A pill at the foot of the map carries the date being drawn.

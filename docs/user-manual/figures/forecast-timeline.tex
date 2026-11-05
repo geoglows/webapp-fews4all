@@ -1,0 +1,97 @@
+% The forecast timeline: what each model means by "a forecast day".
+%
+% Drawn rather than tabulated because the point is the SHAPE -- four models with
+% four different ideas of time, laid on one axis. A table would list the spans
+% without showing that GEOGLOWS stops where GloFAS's last band begins, or that
+% one dashed bar covers every day while naming none.
+%
+% Kept in its own file so content.tex stays prose. Edit the \def block below to
+% move the figure with the data; everything else follows from it.
+\def\horizonend{15}      % last day the axis shows
+\def\geoend{9}           % last day GEOGLOWS names (the map-tables product)
+\def\fhfrom{5}           % the example Flood Hub window
+\def\fhto{6}
+
+\begin{figure}[htbp]
+\centering
+\noindent\makebox[\textwidth][c]{%
+\begin{tikzpicture}[
+    x=0.78cm, y=1cm,
+    band/.style={rounded corners=1.4pt, draw=#1, fill=#1!14, line width=0.5pt},
+    spanbar/.style={rounded corners=1.4pt, draw=#1, fill=#1!7,
+                    line width=0.5pt, dash pattern=on 2pt off 1.6pt},
+    rowlab/.style={anchor=east, font=\footnotesize\bfseries, text=slate},
+    note/.style={anchor=west, font=\scriptsize, text=slate},
+    daynum/.style={anchor=south, font=\tiny, text=slate},
+  ]
+
+  % ---- the shared day axis -------------------------------------------------
+  \draw[line width=0.7pt, text=slate] (0,0) -- (\horizonend+0.6,0);
+  \foreach \d in {0,...,\horizonend}{
+    \draw[line width=0.7pt] (\d,-0.09) -- (\d,0.09);
+    \node[daynum] at (\d,0.12) {\d};
+  }
+  \node[anchor=north, font=\scriptsize\bfseries, text=geoblue] at (0,-0.16) {Today};
+  \node[anchor=south east, font=\scriptsize\itshape, text=slate]
+    at (\horizonend+0.6,0.52) {forecast day};
+
+  % ---- GEOGLOWS: one step a day, out to the product's own horizon ----------
+  \node[rowlab] at (-0.3,-1.0) {GEOGLOWS};
+  \foreach \d in {0,...,\geoend}{
+    \draw[band=geoblue] (\d-0.26,-1.22) rectangle (\d+0.26,-0.78);
+  }
+  \draw[dotted, line width=0.6pt, text=slate]
+    (\geoend+0.45,-1.0) -- (\horizonend+0.4,-1.0);
+  \node[font=\scriptsize, text=slate, anchor=south]
+    at ({(\geoend+\horizonend)/2+0.4},-0.94) {nothing past day \geoend};
+  \node[note] at (0,-1.68)
+    {one 3-hourly step per day, taken at 06:00\,UTC\ \ $\cdot$\ \ 10-day product};
+
+  % ---- GloFAS: three lead bands --------------------------------------------
+  \node[rowlab] at (-0.3,-2.5) {GloFAS};
+  \draw[band=gfteal] (-0.26,-2.72) rectangle (3.26,-2.28);
+  \node[font=\scriptsize, text=gfteal!65!black] at (1.5,-2.5) {1--3};
+  \draw[band=gfteal] (3.74,-2.72) rectangle (10.26,-2.28);
+  \node[font=\scriptsize, text=gfteal!65!black] at (7,-2.5) {4--10};
+  \draw[band=gfteal] (10.74,-2.72) rectangle (15.26,-2.28);
+  \node[font=\scriptsize, text=gfteal!65!black] at (13,-2.5) {11--15};
+  \draw[<-, line width=0.5pt, text=slate] (0,-2.86) -- (0,-3.12);
+  \node[note, font=\scriptsize] at (-0.1,-3.26)
+    {\textcolor{slate}{band 1--3 is published as days \textbf{0}--3: step 1 covers
+     issue $\rightarrow$ +24\,h, so it includes today}};
+  \node[note, align=left] at (0,-3.68)
+    {\texttt{summary\_alerts} grids --- one severity per band,\\
+     so the map changes three times across the whole bar};
+
+  % ---- Flood Hub: a published window, or no timing at all ------------------
+  \node[rowlab] at (-0.3,-4.55) {Flood Hub};
+  \draw[band=fhviolet] (\fhfrom-0.26,-4.77) rectangle (\fhto+0.26,-4.33);
+  \node[note] at (\fhto+0.6,-4.55) {published window, 1--2 days wide};
+  \draw[spanbar=fhviolet] (-0.26,-5.32) rectangle (\horizonend+0.26,-4.98);
+  \node[font=\scriptsize, text=fhviolet!60!black] at (7.5,-5.15)
+    {gauge with no published window --- covers every day, names none};
+
+  % ---- Flash floods --------------------------------------------------------
+  \node[rowlab] at (-0.3,-5.95) {Flash};
+  \draw[band=flashred] (-0.26,-6.17) rectangle (1.26,-5.73);
+  \node[note] at (1.6,-5.95)
+    {a 24-hour window, crossing midnight --- today and tomorrow, never further};
+
+  % ---- what the bar does with all this -------------------------------------
+  \draw[line width=0.5pt, text=slate, dash pattern=on 1.5pt off 1.5pt]
+    (\horizonend+0.5,0.42) -- (\horizonend+0.5,-6.45);
+  \node[anchor=north east, font=\scriptsize, text=slate, align=right]
+    at (\horizonend+0.8,-6.6)
+    {\textcolor{geoblue}{\bfseries the timeline ends here}\\
+     at the last day a forecast \emph{names}};
+\end{tikzpicture}}
+
+\caption[How each model reports a forecast day]{%
+  \textbf{What each model means by a forecast day.}
+  A \textbf{solid} bar names the days it covers, so it earns those days a place on
+  the timeline. A \textbf{dashed} bar covers days without naming any: it is drawn
+  on each of them, but cannot by itself make a day worth stepping to. Colour here
+  separates the models in the diagram only --- on the map they share a palette and
+  are told apart by the panel.}
+\label{fig:forecast-timeline}
+\end{figure}

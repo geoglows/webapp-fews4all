@@ -7,7 +7,7 @@ import {flashFill, flashOutline, paletteColor, rampFor, sevColor, unitLabel, vie
 import {icon} from "./icons.js";
 // Safe to import: cells_tiles never imports the panel back — it reaches the panel
 // only through the callbacks main.js injects into its init().
-import {agreementTally, releaseModelStatus} from "./layers/cells_tiles.js";
+import {agreementTally, releaseDay, releaseModelStatus} from "./layers/cells_tiles.js";
 
 // The panel imports no layer module: the layers call in to it, never the other way
 // round. That is what keeps cells <-> panel and flash <-> panel from being import
@@ -519,11 +519,33 @@ export function renderPanel(props) {
           : "Areas a single model saw alone are hidden."))
     : "";
 
+  // #0: a model that simply does not forecast this far ahead. Checked BEFORE the
+  // dropped-model notice, because on day 9 "Flash floods not in this release"
+  // would be the wrong answer to a right question: the run had them, they cover
+  // 24 hours, and the user has stepped past them. Reach comes from the run record
+  // -- a model that reaches a day and flags nothing is a quiet day, which is a
+  // different sentence and gets the severity/agreement notices instead.
+  const today = releaseDay();
+  const beyond = today.day > 0 && today.reach
+    ? PANEL_MODELS.filter((m) => visibleModels.has(m)
+        && Number.isFinite(Number(today.reach[m]))
+        && today.day > Number(today.reach[m]))
+    : [];
+  const beyondHtml = beyond.length
+    ? notice("info",
+        `${beyond.map(modelLabel).join(" and ")} ${beyond.length > 1 ? "do" : "does"} ` +
+        `not forecast this far`,
+        `Day ${today.day} is past ${beyond.length > 1 ? "their" : "its"} horizon, so ` +
+        `${beyond.length > 1 ? "they are" : "it is"} not on the map. ` +
+        `Step back toward today to see ${beyond.length > 1 ? "them" : "it"}.`)
+    : "";
+
   // #1: a model the pipeline dropped from this release. The app knew and never
   // said so once the header stamp went; the tile just sat on standby.
   const status = releaseModelStatus();
   const missing = (m) => ["dropped", "skipped"].includes(status[m]);
-  const missingRiver = PANEL_MODELS.filter((m) => missing(m) && visibleModels.has(m));
+  const missingRiver = PANEL_MODELS.filter(
+    (m) => missing(m) && visibleModels.has(m) && !beyond.includes(m));
   const missingHtml = missingRiver.length
     ? notice("warn",
         `${missingRiver.map(modelLabel).join(" and ")} not in this release`,
@@ -560,7 +582,7 @@ export function renderPanel(props) {
   // in Filters drops its tile here, because the tile markup reads the same set.
   const riverSection =
     `<div id="section-river" class="mb-4">` + sectionHeader("River Floods", "sec-river") +
-    bodyTag("sec-river") + missingHtml +
+    bodyTag("sec-river") + beyondHtml + missingHtml +
     (nothingHtml || noAgreementHtml + concurNoticeHtml + sevNoticeHtml) +
     noneShown(PANEL_MODELS, visibleModels, "No river models selected.") +
     concurLegendHtml() + tiles +
@@ -575,10 +597,21 @@ export function renderPanel(props) {
   // The flash counterpart of missingHtml: 2026-10-29 dropped flash entirely, and
   // with the overlay switched on the panel showed a legend and standby text over a
   // map with no polygons on it.
-  const flashDroppedHtml = (visibleFlashModels.size && missing("flash"))
-    ? notice("warn", "Flash floods not in this release",
-        "The run could not use them on this day.")
-    : "";
+  // Past its horizon first, for the same reason as the river models: on day 4
+  // "not in this release" would be a wrong answer to a right question. A flash
+  // forecast covers 24 hours from when it was issued, so it reaches tomorrow and
+  // stops — which is a property of the product, not of this run.
+  const flashReach = Number(today.reach && today.reach.flash);
+  const flashBeyond = visibleFlashModels.size && today.day > 0
+    && Number.isFinite(flashReach) && today.day > flashReach;
+  const flashDroppedHtml = flashBeyond
+    ? notice("info", "Flash floods do not forecast this far",
+        `They cover 24 hours from when they are issued, so they reach day ` +
+        `${flashReach} and no further. Step back toward today to see them.`)
+    : (visibleFlashModels.size && missing("flash"))
+      ? notice("warn", "Flash floods not in this release",
+          "The run could not use them on this day.")
+      : "";
 
   const hiddenTiers = FLASH_TIERS.filter((t) => !visibleTiers.has(t));
   const shownTiers = FLASH_TIERS.filter((t) => visibleTiers.has(t));

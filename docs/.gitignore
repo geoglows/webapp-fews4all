@@ -18,6 +18,9 @@
 *.xdv
 *.synctex.gz
 *.pdf
+# latexmk's $out_dir — everything in it is regenerated, including anything a
+# preview step renders there.
+build/
 
 # ---- not sources -----------------------------------------------------------
 # A landing zone for generated files delivered from a chat session. Nothing in

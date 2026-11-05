@@ -141,9 +141,32 @@ def load_all(input_dir, output_dir=None):
                   file=sys.stderr)
             continue
 
+        # The uid is `model:native_id`, plus `@dNN` where the row carries a lead.
+        #
+        # The lead belongs in the key now that GEOGLOWS publishes one row per reach
+        # PER FORECAST DAY: ten days of the same reach share a native_id, and
+        # without the lead every one of them collided. The collision guard below
+        # caught it and renamed them `#1`, `#2`, ... which kept the uids unique but
+        # turned a guard against a data fault into 38,411 lines of normal
+        # operation -- and a guard that fires on every run stops being one.
+        #
+        # So the key says what the row actually is: this reach, at this lead. What
+        # is left for the guard to catch is a genuine duplicate, which is what it
+        # was written for.
         seen, dupes = set(), 0
         for r in found:
             uid = f"{model}:{r['native_id']}"
+            # day_from first: a reader that published its own span (GloFAS's lead
+            # bands) has said something more exact than a lead ever could, and one
+            # cell can carry a row in each band.
+            stamp = r.get("day_from")
+            if stamp in (None, ""):
+                stamp = r.get("lead_time_days")
+            if stamp not in (None, ""):
+                try:
+                    uid = f"{uid}@d{int(float(stamp)):02d}"
+                except (TypeError, ValueError):
+                    pass
             if uid in seen:
                 dupes += 1
                 uid = f"{uid}#{dupes}"
@@ -417,6 +440,27 @@ def main(input_dir=None, output_dir=None, release=None, staging=False):
     by_model, records, status = load_all(input_dir, output_dir)
     release = release or derive_release(input_dir, records)
     release, dropped = apply_guards(by_model, status, release, output_dir)
+
+    # The day span every row speaks for, decided in one place for all four models
+    # once the release date is known. See models.assign_days and HORIZON_DAYS.
+    spans = M.assign_days(records, release)
+    if spans:
+        print("\nForecast day spans (day 0 = release date):")
+        for model in C.MODEL_ORDER:
+            t = spans.get(model)
+            if not t:
+                continue
+            bits = []
+            if t["dated"]:
+                bits.append(f"{t['dated']:,} dated")
+            if t["spanned"]:
+                bits.append(f"{t['spanned']:,} spanning the horizon")
+            print(f"  {model:<10} {', '.join(bits)}")
+            # A model that can date its rows but never does is the failure this
+            # print exists to catch, so it is said out loud rather than inferred.
+            if t["spanned"] and not t["dated"] and model not in ("glofas",):
+                print(f"  {'':<10} note: no {model} row carried a usable window",
+                      file=sys.stderr)
     if dropped:
         records = [r for r in records
                    if r["forecast_uid"].split(":", 1)[0] not in set(dropped)]

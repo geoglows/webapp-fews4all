@@ -228,12 +228,18 @@ GEOGLOWS_PREFIX = "map-tables/"
 #   "csv"      one global file per 3-hourly step, ~119 MB each, no coordinates
 #   "parquet"  ~161 per-VPU files, ~1.7 GB, carrying every step of the horizon
 #
-# CSV while GEOGLOWS_FORECAST_HOUR names a single step, because one step is one
-# file and the parquets would be fourteen times the bytes for the same answer.
-# The moment the policy becomes a maximum over a window, parquet is both cheaper
-# and the only option — ~1.7 GB against ~9.6 GB of CSVs for the full horizon — and
-# the reader already handles both, so this is the only line that changes.
-GEOGLOWS_PRODUCT = "csv"
+# PARQUET since the map grew a forecast timeline. The CSVs are one file per step,
+# so the horizon would be fourteen separate 119 MB downloads -- about the same
+# bytes as the parquets, for a fourteenth of the data. The parquets carry every
+# step of the horizon, which means the morning rule is now a decision the READER
+# makes (see _publish_steps) rather than one the download forecloses, and moving
+# to a max-over-each-day later costs nothing extra to fetch.
+#
+# IT IS A REAL INCREASE: ~124 MB a morning becomes ~1.7 GB, and step 1 pulls ~161
+# files instead of one. If a morning run starts timing out or the link cannot take
+# it, putting "csv" back is the whole rollback -- the reader handles both, and the
+# map falls back to a day-0-only GEOGLOWS with the rest of the timeline intact.
+GEOGLOWS_PRODUCT = "parquet"
 
 # ---- where the Flood Hub forecast comes from -------------------------------
 # An authenticated API rather than a bucket, which changes two things.
@@ -306,13 +312,17 @@ ECPDS_USER_ENV = "ECPDS_USER"
 ECPDS_PASSWORD_ENV = "ECPDS_PASSWORD"
 ECPDS_LOOKBACK_DAYS = 4        # how far back to probe before giving up
 
-# The eight objects a cycle owes us. The three sumAL grids are the alert levels
+# The eleven objects a cycle owes us. The three sumAL grids are the alert levels
 # models.py reads together — a missing one drops GloFAS rather than understating
-# it — and the RPG_U set is one shapefile in five parts.
+# it — the three summary_alerts grids are the same alerts split by lead time, and
+# the RPG_U set is one shapefile in five parts.
 GLOFAS_FILES = [
     "sumAL_medium_AL_{stamp}.nc",
     "sumAL_high_AL_{stamp}.nc",
     "sumAL_extreme_AL_{stamp}.nc",
+    "summary_alerts_1_3_{stamp}.nc",
+    "summary_alerts_4_10_{stamp}.nc",
+    "summary_alerts_11_30_{stamp}.nc",
     "RPG_U{stamp}.shp",
     "RPG_U{stamp}.shx",
     "RPG_U{stamp}.dbf",
@@ -334,6 +344,50 @@ GLOFAS_ALERT_MEMBERS = 16
 GLOFAS_GRID_VAR = "sumAL"
 GLOFAS_GRID_LEVELS = {1: "medium", 2: "high", 3: "extreme"}
 GLOFAS_POINTS_GLOB = "RPG_U*.shp"      # the overlay, not a second source
+
+# ---- the lead-time bands ---------------------------------------------------
+# sumAL answers "does this pixel flood" and nothing about WHEN: it is a maximum
+# over the whole horizon with no time axis to recover. summary_alerts answers the
+# same question three times, once per lead band, on the same 0.05-degree grid.
+#
+# Each file holds one code per pixel. ECMWF documents the code as four return
+# periods x three probability classes, ascending, 5..16:
+#
+#     5-7  = 1.5-year    8-10 = 2-year    11-13 = 5-year    14-16 = 20-year
+#
+# Our files carry no 1.5-year class at all, so the published range is 8..16 and
+# maps exactly onto the three severities already in GLOFAS_SEVERITY.
+#
+# VERIFIED, not assumed. Decoding the three bands and taking the worst class per
+# pixel reproduces sumAL's own classification on the 2026-09-23 cycle across all
+# 26,185 alerting pixels: 100% exact, nothing alerting in sumAL without a band
+# code and nothing carrying a band code that sumAL is silent on. The bands ARE
+# the sumAL alerts, told apart by lead time — which is the only reason it is safe
+# to publish a severity from them.
+#
+#     python3 - <<'EOF'   # the check, if it ever needs repeating
+#     ... decode each band, take the max class per pixel, compare with sumAL
+#     EOF
+GLOFAS_SUMMARY_FILES = {
+    "1-3":   "summary_alerts_1_3_{stamp}.nc",
+    "4-10":  "summary_alerts_4_10_{stamp}.nc",
+    "11-15": "summary_alerts_11_30_{stamp}.nc",   # named _30, carries 11-15
+}
+GLOFAS_SUMMARY_VAR = "max_prob_summary_{band}"
+GLOFAS_CODE_LEVELS = [(8, 10, 1), (11, 13, 2), (14, 16, 3)]   # lo, hi, severity group
+
+# Which forecast days each band covers, as day_from..day_to with day 0 = release.
+#
+# THE FIRST BAND STARTS AT 0, NOT 1. GloFAS numbers its steps from 1 and step 1 is
+# the 00Z cycle plus 24 hours, so read literally the "1-3" band says nothing about
+# the day the forecast was issued — and GloFAS would vanish from the day the map
+# opens on, which is the day most people will ever look at. Step 1 covers the
+# period from issue to +24h, so the first band is published as 0-3: it includes
+# today because its own window does.
+#
+# The later bands are taken literally. Stretching those would be inventing lead
+# time rather than reading it.
+GLOFAS_BANDS = {"1-3": (0, 3), "4-10": (4, 10), "11-15": (11, 15)}
 # The name columns are literal placeholders on the ~92% of GloFAS points that are
 # dynamic grid cells rather than gauged stations.
 GLOFAS_PLACEHOLDERS = {"not a station", "not found", "na", "n/a", "none", "-", "--"}
@@ -346,6 +400,55 @@ FLASH_SEVERITY = {"likely": "warning", "highly_likely": "extreme"}
 
 # The columns of the two tables step 2 writes. Stated here because step 3 reads
 # them and a contract that lives in one file cannot drift between two.
+# ---- the forecast day axis -------------------------------------------------
+# A release reports a horizon, not a moment. Day 0 is the release date; day N is
+# N days later. Every forecast row carries the span of days it speaks for, as
+# day_from..day_to inclusive, and the map draws a row on day D when
+# day_from <= D <= day_to.
+#
+# One span covers all four models, which is the point — they mean very different
+# things by "forecast" and a single pair of columns is what lets them share a
+# timeline without pretending otherwise:
+#
+#   GEOGLOWS   [N, N]              one morning step; asserts THAT day
+#   Flood Hub  [start, end]        the published window, 1-2 days wide
+#   Flood Hub  [0, HORIZON-1]      ...when the gauge publishes no window at all
+#   GloFAS     [0, HORIZON-1]      the grid is a max over the horizon with no
+#                                  time axis to recover, so it spans everything
+#   flash      [0, 1]              24 hours, which straddles two days
+#
+# The WIDTH of a span is therefore a confidence signal and not just bookkeeping.
+# A width of 1 means the model named that day. A width of HORIZON means it did
+# not, and the row is on the map because it has to go somewhere. Agreement uses
+# this: see CONCUR_MAX_SPAN below.
+#
+# 16 because GloFAS's last lead band runs to day 15 and a ceiling that clipped it
+# would silently shorten a band the source published. It is a CEILING, not the
+# length: step 6 ends the timeline at the last day some forecast actually names,
+# which with today's products is day 9 (GEOGLOWS) or day 15 (GloFAS bands). An
+# over-generous ceiling costs nothing; a tight one loses data.
+HORIZON_DAYS = 16
+
+# How wide a span may be and still count toward model agreement. A GloFAS cell
+# spanning the whole horizon would otherwise agree with every GEOGLOWS day it
+# touches, by construction, and concurrence that cannot fail is not a measurement.
+# Set to HORIZON_DAYS to count everything, 1 to demand that both models named the
+# same day.
+#
+# IT IS DELIBERATELY OPEN. At HORIZON_DAYS the day-0 map is bit-for-bit what it
+# was before the timeline existed, which is the only setting that can be turned on
+# without re-reading every agreement figure anyone has already looked at. Tighten
+# it once there is a reason to, not as part of a change about something else:
+# at 3 GloFAS stops contributing to agreement entirely, and that is a large claim
+# to make silently.
+CONCUR_MAX_SPAN = HORIZON_DAYS
+
+
+def day_dir(release_dir, day):
+    """<release>/days/dNN — where one forecast day's delivered tables live."""
+    return os.path.join(release_dir, "days", f"d{int(day):02d}")
+
+
 FORECAST_COLUMNS = [
     "forecast_uid", "model", "severity", "native_id",
     "return_period_yr", "flow_cms",
@@ -354,6 +457,14 @@ FORECAST_COLUMNS = [
     # Identity a model happens to publish about the place it forecasts for.
     # Blank for models that do not; never invented.
     "country", "region", "basin", "sub_basin", "station", "river", "lead_time_days",
+    # The forecast day span this row speaks for; see HORIZON_DAYS above.
+    "day_from", "day_to",
+    # The day in this release when this forecast is at its worst, derived in
+    # step 6 from the row's own siblings. Blank where the model does not resolve
+    # a peak: a GloFAS pixel or a Flood Hub window has ONE severity across its
+    # whole span, so there is no worst day to name and inventing one would be the
+    # same mistake as Flood Hub's own peakTime field.
+    "peak_day",
 ]
 # One table for which forecasts are in which cell, at every resolution. Step 2
 # writes it with the base resolution only; step 3 expands it in place. Same name
@@ -371,7 +482,7 @@ MODEL_ORDER = ["geoglows", "flood_hub", "glofas", "flash"]
 # a stronger statement than it looks: a coarse cell holds every forecast beneath
 # it, so counting its own models would report agreement between models that never
 # meet. That distinction is the whole reason this column exists.
-CELL_COLUMNS = ["h3_id", "res", "severity", "model_count", "models",
+CELL_COLUMNS = ["h3_id", "res", "day", "severity", "model_count", "models",
                 "co_models", "forecast_count"]
 
 # Step 4's enrichments. Impact is joined onto cells; Near onto forecasts. Both

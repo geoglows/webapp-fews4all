@@ -76,9 +76,20 @@ export const FIELD_LABELS = [
   // them. The honest label is the thing they agree it is: a discharge.
   ["flow_cms", "Flow"],
   ["issued_time", "Issued"],
-  ["start_time", "Start"],
-  ["peak_time", "Peak"],
-  ["end_time", "End"],
+  // Start, Peak and End used to sit here and no longer do.
+  //
+  // The timeline answers all three better than a row of timestamps could: how
+  // long a forecast lasts is how many days you can step through it, and when it
+  // peaks is the day the panel marks as the peak. Three absolute datetimes per
+  // forecast, in four models' four conventions, were asking the reader to do that
+  // arithmetic themselves.
+  //
+  // Peak in particular had to go. Flood Hub's peakTime is a different quantity
+  // from its forecastTimeRange -- on most warned gauges it lands BEFORE the
+  // window's own start -- so showing them stacked as Start/Peak/End presented two
+  // unrelated numbers as one event. What the panel marks now is derived from the
+  // forecast's own days (see peak_day in backend/common/config.py) and exists
+  // only where the model actually resolves one.
 ];
 // The riverId row is labelled per model: GEOGLOWS forecasts a reach ("River
 // ID"), Flood Hub a gauge, GloFAS a fixed reporting point on its own grid —

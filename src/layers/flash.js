@@ -103,8 +103,20 @@ function loadFlash(cb) {
     .then((r) => { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); })
     .then((data) => {
       if (token !== flashReq || url !== flashUrl) return;   // a later day won
-      (data.features || []).forEach(enrich);
-      flashData = data; flashLoading = false; cb(data);
+      // The sidecar is published once per RELEASE, not once per day, so it holds
+      // every flash polygon the run produced. Without this the overlay drew all
+      // of them on day 9 as readily as on day 0 — a 24-hour warning shown a week
+      // out, which is the single most misleading thing this layer could do.
+      //
+      // The day's forecasts.csv is the filter: a polygon whose forecast is not in
+      // play today has no row to join to, and is not ours to draw.
+      const feats = (data.features || []).filter((f) => {
+        const uid = f && f.properties && f.properties.forecast_uid;
+        return !forecastsByUid || (uid && forecastsByUid.has(uid));
+      });
+      feats.forEach(enrich);
+      flashData = {type: "FeatureCollection", features: feats};
+      flashLoading = false; cb(flashData);
     })
     .catch((err) => {
       if (token !== flashReq) return;

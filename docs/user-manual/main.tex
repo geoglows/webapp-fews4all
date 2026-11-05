@@ -30,6 +30,7 @@
 \usepackage{calc}                     % pandoc's tables size columns with \real{}
 \usepackage{ragged2e}
 \usepackage{xcolor}
+\usepackage{tikz}
 \usepackage{microtype}
 \usepackage{fancyhdr}
 \usepackage{parskip}                  % blank line between paragraphs, no indent
@@ -42,6 +43,15 @@
 
 \definecolor{geoblue}{HTML}{0284C7}
 \definecolor{rulegrey}{HTML}{CBD5E1}
+
+% Figure colours. These separate the models inside a DIAGRAM and are deliberately
+% not the map's palette: on the map every river model shares one ramp and is told
+% apart by the panel, so borrowing those colours here would teach the reader a
+% key that does not exist.
+\definecolor{slate}{HTML}{475569}
+\definecolor{gfteal}{HTML}{0F766E}
+\definecolor{fhviolet}{HTML}{7C3AED}
+\definecolor{flashred}{HTML}{DC2626}
 \definecolor{noteedge}{HTML}{B45309}
 \definecolor{notefill}{HTML}{FFFBEB}
 

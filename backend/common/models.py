@@ -23,7 +23,8 @@ import csv
 import glob
 import os
 import sys
-from datetime import datetime
+from collections import Counter
+from datetime import datetime, timedelta
 
 from . import config as C
 
@@ -57,6 +58,104 @@ def blank_record():
     """Every column the contract promises, all empty. Readers fill what they have,
     so a reader can never emit a record that is missing a column downstream expects."""
     return {k: "" for k in C.FORECAST_COLUMNS}
+
+
+def _date_of(stamp):
+    """The calendar date inside a timestamp string, or None. Lenient by design:
+    the four feeds stamp their times four different ways and a span is a DAY, so
+    anything that yields a date is enough and the hour is not worth refusing over."""
+    t = (stamp or "").strip()
+    if not t:
+        return None
+    try:
+        return datetime.strptime(t[:10], "%Y-%m-%d").date()
+    except ValueError:
+        return None
+
+
+def assign_days(records, release, horizon=None):
+    """Stamp day_from/day_to on every record. One place, one rule per model.
+
+    Day 0 is the release date. The rules are set out beside HORIZON_DAYS in
+    config.py; they live together here rather than in each reader because the
+    whole point of the span is that four models with four different ideas of
+    "forecast" end up on one comparable axis. Split across four readers, they
+    would drift apart silently and the timeline would start lying.
+
+    A span that reaches past the horizon is clamped to it rather than dropped: the
+    forecast is real, the map simply does not go that far. A span that ended
+    BEFORE the release is pinned to day 0 for the same reason — Flood Hub
+    occasionally publishes a window that has already closed, and silently deleting
+    those would be a worse answer than showing them today.
+
+    Returns a per-model count of what got a real span versus what fell back to
+    spanning the horizon, which step 2 prints: a model quietly falling back for
+    every row is the failure this is most likely to hide.
+    """
+    horizon = horizon or C.HORIZON_DAYS
+    last = horizon - 1
+    rel = _date_of(release)
+    tally = {}
+
+    def clamp(d):
+        return max(0, min(last, d))
+
+    for r in records:
+        model = r.get("model")
+        t = tally.setdefault(model, {"dated": 0, "spanned": 0})
+
+        # A reader that already knows its own days keeps them. GloFAS sets these
+        # from its lead bands; nothing here can improve on a span the source
+        # published, and overwriting one would be the whole point thrown away.
+        if r.get("day_from") != "" and r.get("day_from") is not None \
+                and r.get("day_to") != "" and r.get("day_to") is not None:
+            try:
+                lo, hi = clamp(int(r["day_from"])), clamp(int(r["day_to"]))
+                r["day_from"], r["day_to"] = min(lo, hi), max(lo, hi)
+                t["dated"] += 1
+                continue
+            except (TypeError, ValueError):
+                pass
+
+        if model == "geoglows":
+            # The reader already knows which step this row came from; the lead is
+            # the authority, not the timestamp, because it is what the step grid
+            # said rather than what a string round-tripped to.
+            try:
+                day = clamp(int(float(r.get("lead_time_days") or 0)))
+            except (TypeError, ValueError):
+                day = 0
+            r["day_from"] = r["day_to"] = day
+            t["dated"] += 1
+            continue
+
+        if model == "flash":
+            # A flash forecast is issued for the next 24 hours, which straddles
+            # two calendar days far more often than not: a warning issued at
+            # 18:00 runs to 18:00 tomorrow, and showing it on today alone hides
+            # three quarters of its own window. Days 0 and 1, and no further --
+            # it is the shortest-lived thing on the map and must not look like it
+            # has an opinion about the rest of the week.
+            r["day_from"], r["day_to"] = 0, min(1, last)
+            t["dated"] += 1
+            continue
+
+        if model == "flood_hub" and rel:
+            a, b = _date_of(r.get("start_time")), _date_of(r.get("end_time"))
+            if a and b:
+                lo, hi = clamp((a - rel).days), clamp((b - rel).days)
+                r["day_from"], r["day_to"] = min(lo, hi), max(lo, hi)
+                t["dated"] += 1
+                continue
+
+        # Anything that could not be dated spans the horizon: GloFAS when its
+        # summary_alerts bands are missing, and a Flood Hub gauge with no published
+        # window. This is not a guess at timing, it is the ABSENCE of one, and
+        # CONCUR_MAX_SPAN is what stops it being read as agreement.
+        r["day_from"], r["day_to"] = 0, last
+        t["spanned"] += 1
+
+    return tally
 
 
 def find_input(model, input_dir=None):
@@ -182,49 +281,57 @@ def _cycle_siblings(path):
     return sorted(glob.glob(pattern)) or [path]
 
 
-def _publish_step(files, cycle):
-    """(timestamp, note) — which step of the forecast this release reports.
+def _publish_steps(files, cycle, horizon=None):
+    """([timestamp, ...], note) — one step per forecast day, at the morning hour.
 
-    C.GEOGLOWS_FORECAST_HOUR on the cycle's own date.
+    C.GEOGLOWS_FORECAST_HOUR on the cycle's date and on each of the HORIZON_DAYS-1
+    days after it. The horizon the FILES publish wins: a cycle carrying ten days of
+    steps yields ten, and the map simply has nothing from this model past that.
 
-    The step is chosen from the TIME GRID the files publish, never from the steps
+    The steps are chosen from the TIME GRID the files publish, never from the steps
     that happen to carry a flag. Those are different questions, and answering the
     second one looks right until a quiet morning: if nothing floods anywhere at
     06:00, "the steps with flags" would not contain 06:00, and the reader would
     silently report a different hour than the config claims.
 
     One file is probed rather than all of them — every VPU in a cycle shares the
-    same time axis — and the probe pushes an equality filter down, so it reads the
-    statistics of a few row groups rather than any data.
+    same time axis. Day 0 keeps the nearest-step fallback, because a cycle that
+    publishes no 06:00 step at all should still produce a map; later days do not,
+    because substituting a neighbouring day's step there would put one day's
+    forecast on another day's tab, which is worse than an empty tab.
 
-    Replacing this with a max-over-window rule is a change to this function and the
-    filter that uses it; every step is already in the files.
+    Moving from this morning rule to a max over each day is a change to this
+    function and the filter that uses it; every step is already in the files.
     """
-    import pyarrow.compute as pc
     import pyarrow.dataset as ds
 
+    horizon = horizon or C.HORIZON_DAYS
     one = ds.dataset(files[0], format="parquet")
-
-    def grid():
-        return sorted(set(one.to_table(columns=["timestamp"])["timestamp"].to_pylist()))
-
+    grid = sorted(set(one.to_table(columns=["timestamp"])["timestamp"].to_pylist()))
+    if not grid:
+        return [], "the parquets carry no timesteps"
     if cycle is None:
-        steps = grid()
-        return (steps[0] if steps else None), "cycle unknown; took the first step"
+        return [grid[0]], "cycle unknown; took the first step"
 
-    target = cycle.replace(hour=C.GEOGLOWS_FORECAST_HOUR, minute=0,
-                           second=0, microsecond=0)
-    probe = one.to_table(columns=["timestamp"],
-                         filter=pc.equal(pc.field("timestamp"), target))
-    if probe.num_rows:
-        return target, ""
+    have = set(grid)
+    day0 = cycle.replace(hour=C.GEOGLOWS_FORECAST_HOUR, minute=0,
+                         second=0, microsecond=0)
+    steps, note = [], ""
+    for d in range(horizon):
+        want = day0 + timedelta(days=d)
+        if want in have:
+            steps.append(want)
+        elif d == 0:
+            nearest = min(grid, key=lambda t: abs(t - want))
+            steps.append(nearest)
+            note = (f"this cycle publishes no {want:%Y-%m-%d %H:%M} step; "
+                    f"day 0 reports {nearest:%Y-%m-%d %H:%M} instead")
 
-    steps = grid()
-    if not steps:
-        return None, "the parquets carry no timesteps"
-    nearest = min(steps, key=lambda t: abs(t - target))
-    return nearest, (f"this cycle publishes no {target:%Y-%m-%d %H:%M} step; "
-                     f"reporting {nearest:%Y-%m-%d %H:%M} instead")
+    if len(steps) < horizon:
+        tail = (f"; the files reach day {len(steps) - 1} of {horizon - 1}"
+                if steps else "")
+        note = (note + tail) if note else tail.lstrip("; ").capitalize()
+    return steps, note
 
 
 def _severity(rp):
@@ -265,30 +372,38 @@ def read_geoglows_parquet(path):
 
     files = _cycle_siblings(path)
     stamp, cycle = _cycle_of(path)
-    step, why = _publish_step(files, cycle)
+    steps, why = _publish_steps(files, cycle)
     if why:
         print(f"  note: geoglows {why}", file=sys.stderr)
-    if step is None:
+    if not steps:
         return []
 
     floor = min(yr for yr, _ in C.GEOGLOWS_THRESHOLDS)
-    expr = (pc.equal(pc.field("timestamp"), step)) & (pc.field("ret_per") >= floor)
+    expr = (pc.field("timestamp").isin(steps)) & (pc.field("ret_per") >= floor)
     if C.GEOGLOWS_MIN_MEAN_FLOW:
         expr = expr & (pc.field("mean") >= C.GEOGLOWS_MIN_MEAN_FLOW)
 
     rows = ds.dataset(files, format="parquet").to_table(
-        columns=["comid", "mean", "ret_per"], filter=expr)
+        columns=["comid", "mean", "ret_per", "timestamp"], filter=expr)
 
     comids = [int(c) for c in rows["comid"].to_pylist()]
     means = rows["mean"].to_pylist()
     rps = rows["ret_per"].to_pylist()
+    whens = rows["timestamp"].to_pylist()
     pts = reach_points(comids)
-    out = [_geoglows_record(c, rp, m, cycle, step, pts)
-           for c, rp, m in zip(comids, rps, means) if _severity(rp)]
+    out = [_geoglows_record(c, rp, m, cycle, w, pts)
+           for c, rp, m, w in zip(comids, rps, means, whens) if _severity(rp)]
 
-    lead = f" (+{(step - cycle).total_seconds() / 3600:.0f}h)" if cycle else ""
+    per_day = Counter(r["lead_time_days"] for r in out)
     print(f"  geoglows   {len(files)} parquet(s), cycle {stamp or '?'}, "
-          f"reporting {step:%Y-%m-%d %H:%M}Z{lead}")
+          f"{len(steps)} morning step(s) "
+          f"{steps[0]:%Y-%m-%d}..{steps[-1]:%Y-%m-%d} at "
+          f"{C.GEOGLOWS_FORECAST_HOUR:02d}:00Z")
+    if len(per_day) > 1:
+        shape = "  ".join(f"d{int(float(k)):02d}:{v:,}"
+                          for k, v in sorted(per_day.items(),
+                                             key=lambda kv: float(kv[0])))
+        print(f"             {shape}")
     missing = sum(1 for r in out if r["lat"] == "")
     if missing:
         print(f"  note: {missing:,} GEOGLOWS reach(es) are not in "
@@ -571,19 +686,35 @@ def read_glofas(path):
     # Two gauges in one hexagon is the one place upstream area exists, so it
     # settles that tie: the larger catchment is the downstream one, and the reach
     # a reader is likelier to mean.
+    bands = _glofas_bands(folder, stamp, level_of.shape)
+
+    # Keyed by (cell, band) once the bands are in. A pixel that clears the 2-year
+    # threshold in the 1-3 band and the 20-year threshold in the 4-10 band is
+    # making two different statements about two different weeks, and collapsing
+    # them to one row would throw away the half the timeline exists to show.
+    # Without the bands the key is (cell, None) and this is the old behaviour
+    # exactly: one row per cell, spanning the horizon.
     best, gauge = {}, {}
     for y, x in zip(iy, ix):
         la, lo = round(float(lat[y]), 3), round(float(lon[x]), 3)
         cell = h3.latlng_to_cell(la, lo, C.BASE_RES)
         pt = points.get((la, lo))
-        key = (int(level_of[y, x]), 1 if pt else 0)
-        if cell not in best or key > best[cell][0]:
-            best[cell] = (key, la, lo, pt or {})
+        if bands:
+            here = [(b, int(g[y, x])) for b, g in bands.items() if g[y, x] > 0]
+        else:
+            here = [(None, int(level_of[y, x]))]
+        for band, group in here:
+            if group <= 0:
+                continue
+            key = (group, 1 if pt else 0)
+            slot = (cell, band)
+            if slot not in best or key > best[slot][0]:
+                best[slot] = (key, la, lo, pt or {})
         if pt and (cell not in gauge or pt["ups_area"] > gauge[cell]["ups_area"]):
             gauge[cell] = pt
 
     rows = []
-    for cell, ((group, _has_pt), la, lo, pt) in best.items():
+    for (cell, band), ((group, _has_pt), la, lo, pt) in best.items():
         place = gauge.get(cell) or pt
         r = blank_record()
         r.update({
@@ -603,8 +734,64 @@ def read_glofas(path):
             "river": place.get("river", ""),
             "lat": la, "lon": lo,
         })
+        if band:
+            lo_d, hi_d = C.GLOFAS_BANDS[band]
+            r["day_from"], r["day_to"] = lo_d, hi_d
+            # The band IS the lead now, so it overrides whatever the overlay point
+            # happened to say: the point's LeadtimeH is one pixel's own peak and
+            # this row may be carrying another pixel's severity.
+            r["lead_time_days"] = lo_d
         rows.append(r)
+
+    if bands:
+        per = Counter(b for (_c, b) in best)
+        print(f"  glofas     {len(rows):,} row(s) across {len(set(c for c, _b in best)):,} "
+              f"cell(s), dated by lead band: "
+              + "  ".join(f"{b}d:{per[b]:,}" for b in C.GLOFAS_SUMMARY_FILES))
+    else:
+        print(f"  glofas     {len(rows):,} row(s); no summary_alerts grids — "
+              f"spanning the horizon undated", file=sys.stderr)
     return rows
+
+
+def _glofas_bands(folder, stamp, shape):
+    """{band: class grid} from the three summary_alerts files, or None.
+
+    Each pixel carries one code; C.GLOFAS_CODE_LEVELS turns it into the same
+    severity group sumAL yields. Decoding all three and taking the worst class per
+    pixel reproduces sumAL exactly — see the note beside GLOFAS_SUMMARY_FILES —
+    which is what makes it safe to publish a severity from a band rather than from
+    the grid it was validated against.
+
+    ALL THREE OR NONE. A band that failed to download is not a quiet band: its
+    alerts would silently move to whichever band DID arrive, or vanish. With any
+    one missing the reader falls back to the undated sumAL path, where GloFAS
+    spans the horizon as it always has — less useful, never wrong.
+    """
+    import numpy as np
+    import netCDF4
+
+    out = {}
+    for band, pattern in C.GLOFAS_SUMMARY_FILES.items():
+        q = os.path.join(folder, pattern.format(stamp=stamp))
+        if not os.path.exists(q):
+            return None
+        with netCDF4.Dataset(q) as d:
+            name = C.GLOFAS_SUMMARY_VAR.format(band=band)
+            if name not in d.variables:
+                name = next((v for v in d.variables
+                             if v.startswith("max_prob_summary")), None)
+                if name is None:
+                    return None
+            v = d.variables[name]
+            codes = np.ma.filled(v[:], 0).astype(np.int16)
+        if codes.shape != shape:
+            return None
+        cls = np.zeros(shape, dtype=np.int8)
+        for lo, hi, group in C.GLOFAS_CODE_LEVELS:
+            cls[(codes >= lo) & (codes <= hi)] = group
+        out[band] = cls
+    return out
 
 
 def _glofas_issued(stamp):

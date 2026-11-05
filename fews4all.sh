@@ -143,11 +143,11 @@ if [ -n "$DRY_RUN" ]; then
 fi
 
 echo
-echo "--- steps 2-5: build the release ------------------------------"
+echo "--- steps 2-6: build the release ------------------------------"
 python "$FEWS_ROOT/backend/daily/run_daily.py" \
-  || fail "steps 2-5 (build)"
+  || fail "steps 2-6 (build)"
 
-# --- step 6: publish to S3 -------------------------------------------------
+# --- publish to S3 -------------------------------------------------
 # Not written yet. When it is, it goes here, and it must upload the release
 # folder BEFORE the pointer — a viewer who loads in between would otherwise get
 # a half-uploaded release, and a truncated CSV parses fine.

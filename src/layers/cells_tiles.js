@@ -161,6 +161,25 @@ export function releaseModelStatus() {
   return (release && release.run && release.run.models) || {};
 }
 
+/* Which forecast day is on screen, and what the run says about it.
+ *
+ *   day      0 for a past release or today, 1..horizon-1 looking forward
+ *   horizon  how many days this release carries; 1 means no forecast half
+ *   models   the models with something to report on THIS day
+ *   reach    per model, the furthest day it forecasts at all
+ *
+ * The panel needs `models` to tell two things apart that look identical on a map
+ * and are completely different statements: a model with nothing to report today,
+ * and a model that cannot see this far ahead. Only the run record knows which,
+ * because a model that reaches a day and flags nothing writes no rows at all. */
+export function releaseDay() {
+  const day = (release && release.day) | 0;
+  const horizon = Math.max(1, (release && release.horizon) | 0 || 1);
+  const entry = (release && release.days || []).find((d) => (d.day | 0) === day);
+  const reach = (release && release.run && release.run.model_reach) || null;
+  return {day, horizon, models: (entry && entry.models) || null, reach};
+}
+
 // Whether this cell is corroborated, given the models on screen. One test for the
 // filter, the `agree` feature-state that colors it, and the heat surface it lands
 // on — they have to be the same question or a cell passes one and fails another.

@@ -38,8 +38,14 @@ One folder per document, holding its own sources and assets:
 user-manual/
   main.tex      the LOOK — preamble, title page, table of contents
   content.tex   the PROSE — what the manual actually says
-  images/       anything the document includes
+  figures/      drawn figures, one .tex each, \input from the prose
+  images/       anything the document includes as a file
 ```
+
+A figure drawn in TikZ goes in `figures/` as its own file rather than inline, so
+the prose stays readable as prose. Keep the numbers a figure depends on in a
+`\def` block at its top, so moving the figure with the data is one edit and not
+a hunt through coordinates.
 
 Keeping the look and the content in separate files is deliberate. Mixing them is
 how a document becomes something only its author can edit.

@@ -43,11 +43,23 @@ from common import manifest as MAN     # noqa: E402
 
 
 def read_forecasts(path):
-    """{forecast_uid: (model, severity)} — all step 3 needs from the forecast table."""
+    """{forecast_uid: (model, severity, day_from, day_to)}
+
+    The span is what makes a cell a function of the day. A row is in play on day D
+    when day_from <= D <= day_to; a file written before spans existed reads as
+    [0, 0], which is what it meant.
+    """
     out = {}
     with open(path, newline="", encoding="utf-8-sig") as f:
         for row in csv.DictReader(f):
-            out[row["forecast_uid"]] = (row["model"], (row["severity"] or "").lower())
+            def day(key):
+                try:
+                    return int(row.get(key) or 0)
+                except (TypeError, ValueError):
+                    return 0
+            out[row["forecast_uid"]] = (row["model"],
+                                        (row["severity"] or "").lower(),
+                                        day("day_from"), day("day_to"))
     return out
 
 
@@ -83,8 +95,8 @@ def ordered(models):
            sorted(m for m in models if m not in C.MODEL_ORDER)
 
 
-def build(base, meta):
-    """(cells, rollup) for every resolution, from the res-6 pairs.
+def build(base, meta, day):
+    """(cells, rollup) for ONE forecast day, at every resolution, from the res-6 pairs.
 
     One pass over the base cells does all four resolutions at once: each res-6 cell
     contributes its forecasts to its ancestor at each level, and — if it holds two
@@ -93,9 +105,28 @@ def build(base, meta):
     """
     import h3
 
+    def here(uid):
+        """Is this forecast in play on `day`?"""
+        m = meta.get(uid)
+        return m is not None and m[2] <= day <= m[3]
+
+    def firm(uid):
+        """...and narrow enough for its presence to count as AGREEMENT.
+
+        A row spanning the whole horizon is on this day because it had to go
+        somewhere, not because the model named it. Counting it would make
+        concurrence with it unfalsifiable. C.CONCUR_MAX_SPAN decides how much
+        width is still a claim; see the note beside it in config.py.
+        """
+        m = meta[uid]
+        return (m[3] - m[2] + 1) <= C.CONCUR_MAX_SPAN
+
     cells = {}        # (res, cell) -> {"uids": set, "co": set of frozenset}
-    for cell, uids in base.items():
-        models_here = {meta[u][0] for u in uids if u in meta}
+    for cell, all_uids in base.items():
+        uids = [u for u in all_uids if here(u)]
+        if not uids:
+            continue
+        models_here = {meta[u][0] for u in uids if firm(u)}
         # The agreement fact, decided here at the base resolution and nowhere else.
         co_here = frozenset(models_here) if len(models_here) >= 2 else None
 
@@ -106,22 +137,42 @@ def build(base, meta):
             if co_here:
                 rec["co"].add(co_here)
 
-    rows, rollup = [], []
+    rows = []
     for (res, cell), rec in cells.items():
         uids = rec["uids"]
         models = ordered({meta[u][0] for u in uids if u in meta})
         rows.append([
-            cell, res,
+            cell, res, day,
             worst(meta[u][1] for u in uids if u in meta),
             len(models), "+".join(models),
             "|".join("+".join(ordered(s)) for s in sorted(rec["co"], key=lambda x: sorted(x))),
             len(uids),
         ])
-        for uid in sorted(uids):
-            rollup.append([res, cell, uid])
     rows.sort(key=lambda r: (r[1], r[0]))
-    rollup.sort()
-    return rows, rollup
+    return rows
+
+
+def expand(base):
+    """[res, cell, uid] at every resolution — which forecast is in which cell.
+
+    Day-independent on purpose. A forecast's CELL never changes with the day; only
+    whether it is in play does, and that is a function of its span, which the front
+    end has. Writing this once rather than fourteen times is most of why the day
+    axis costs so little.
+    """
+    import h3
+    # A set, not a list: one forecast often lies in several res-6 cells (a long
+    # reach crosses them), and those collapse onto ONE ancestor at res 3. Appending
+    # blind would record that forecast in the coarse cell once per fine cell it
+    # touched, inflating forecast_count and the panel's lists with duplicates of
+    # the same forecast. That is what the old code's `uids` set was quietly doing.
+    out = set()
+    for cell, uids in base.items():
+        for res in C.RESOLUTIONS:
+            key = cell if res == C.BASE_RES else h3.cell_to_parent(cell, res)
+            for uid in uids:
+                out.add((res, key, uid))
+    return [list(t) for t in sorted(out)]
 
 
 
@@ -149,18 +200,38 @@ def main(release_dir=None):
     print(f"  {len(base):,} res-{C.BASE_RES} cell(s) to roll up\n")
 
     t0 = time.time()
-    rows, rollup = build(base, meta)
-    print(f"Rolled up in {time.time() - t0:.1f}s")
+    rollup = expand(base)
+    rows, shape = [], {}
+    for day in range(C.HORIZON_DAYS):
+        day_rows = build(base, meta, day)
+        rows.extend(day_rows)
+        base_rows = [r for r in day_rows if r[1] == C.BASE_RES]
+        shape[day] = {
+            "cells": len(base_rows),
+            "agreement": sum(1 for r in base_rows if r[6]),
+            "models": sorted({m for r in base_rows for m in (r[5] or "").split("+") if m}),
+        }
+    print(f"Rolled up {C.HORIZON_DAYS} forecast day(s) in {time.time() - t0:.1f}s\n")
+
+    # The per-day shape IS the headline now. A day with no cells is not a bug —
+    # it is a day no model reaches — but it has to be visible here, because the
+    # front end will be asked to explain it and this is where the answer is set.
+    print(f"  {'day':>4} {'res-6 cells':>12} {'agreeing':>9}  models")
+    for day in range(C.HORIZON_DAYS):
+        d = shape[day]
+        print(f"  {day:>4} {d['cells']:>12,} {d['agreement']:>9,}  "
+              f"{', '.join(d['models']) or '--'}")
 
     by_res = {}
     for r in rows:
         by_res.setdefault(r[1], [0, 0])
         by_res[r[1]][0] += 1
-        if r[5]:
+        if r[6]:
             by_res[r[1]][1] += 1
+    print()
     for res in C.RESOLUTIONS:
         n, co = by_res.get(res, (0, 0))
-        print(f"  res {res}: {n:>7,} cell(s), {co:>5,} with agreement")
+        print(f"  res {res}: {n:>7,} cell-day(s), {co:>5,} with agreement")
 
     c_bytes = write_csv(os.path.join(out_dir, "cells.csv"), C.CELL_COLUMNS, rows)
     r_bytes = write_csv(p_path, C.MATCH_COLUMNS, rollup)
@@ -168,6 +239,8 @@ def main(release_dir=None):
     print(f"  cells.csv            {len(rows):>7,} row(s)  {c_bytes / 1e6:>6.2f} MB")
     print(f"  cell_forecasts.csv   {len(rollup):>7,} row(s)  {r_bytes / 1e6:>6.2f} MB")
     _stamp(out_dir, cells=len(rows), cell_forecasts=len(rollup),
+           horizon_days=C.HORIZON_DAYS,
+           by_day={str(d): shape[d] for d in shape},
            by_res={res: by_res.get(res, [0, 0])[0] for res in C.RESOLUTIONS},
            agreement={res: by_res.get(res, [0, 0])[1] for res in C.RESOLUTIONS})
 

@@ -233,6 +233,40 @@ function buildRules(style, cells) {
 export const TABLES = ["cells.csv", "forecasts.csv", "cell_forecasts.csv",
                        "layers.csv", "palettes.csv", "models.csv"];
 
+// Which of those live under days/dNN/ rather than at the release root. The split
+// is payload, not principle: cells and forecasts are what change from one
+// forecast day to the next, and they are the two big ones. The match table and
+// the three style tables are identical on every day of a release, so fetching
+// them per day would be fetching the same answer fourteen times.
+const PER_DAY = new Set(["cells.csv", "forecasts.csv"]);
+
+/* A release published before the day axis existed has no days/ folder. Vite
+ * answers a missing file with index.html and a 200, so `r.ok` is not the test —
+ * a body that opens with "<" is. Falling back to the root tables makes every
+ * older release load exactly as it used to, which is what lets the timeline carry
+ * history across the change instead of starting again at it. */
+async function tableText(url, fallbackUrl) {
+  const get = async (u) => {
+    const r = await fetch(u);
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    const t = await r.text();
+    if (t.trimStart().startsWith("<")) throw new Error("not a table");
+    return t;
+  };
+  try {
+    return await get(url);
+  } catch (err) {
+    if (!fallbackUrl) throw new Error(`${url}: ${err.message}`);
+    try {
+      return await get(fallbackUrl);
+    } catch (err2) {
+      throw new Error(`${fallbackUrl}: ${err2.message}`);
+    }
+  }
+}
+
+export const dayFolder = (day) => `days/d${String(day | 0).padStart(2, "0")}/`;
+
 // The run record step 2 writes beside the tables: which file each model was read
 // from, what it was dated, and whether it was trusted into the release. Optional
 // by design — the map does not need it to draw, so a release published before
@@ -252,15 +286,19 @@ export async function loadRun(base) {
  *
  * Bounded, because a parsed release is tens of megabytes of live objects — 25k
  * cells and 17k forecasts as Maps — and a year of them would exhaust the tab.
- * Eight is enough to keep a playback window and its prefetch resident; beyond
- * that the oldest goes, and revisiting it costs one fetch.
+ *
+ * The key is a release AND a forecast day now, so one release can occupy up to
+ * fourteen slots and eight is no longer a playback window. Sixteen holds today
+ * plus a fortnight of its forecast, which is the sequence a user actually steps
+ * through; scrubbing far back into history past that costs one fetch per day, as
+ * it always did.
  */
-const CACHE_MAX = 8;
+const CACHE_MAX = 16;
 const cache = new Map();
 
 export function cachedRelease(key) { return cache.get(key) || null; }
 
-export async function loadReleaseCached(base, key) {
+export async function loadReleaseCached(base, key, day = 0) {
   const hit = cache.get(key);
   if (hit) {
     // Re-inserting moves it to the end, so eviction takes the least recently
@@ -269,19 +307,19 @@ export async function loadReleaseCached(base, key) {
     cache.set(key, hit);
     return hit;
   }
-  const release = await loadRelease(base);
+  const release = await loadRelease(base, day);
   cache.set(key, release);
   while (cache.size > CACHE_MAX) cache.delete(cache.keys().next().value);
   return release;
 }
 
-export async function loadRelease(base) {
+export async function loadRelease(base, day = 0) {
   const root = base.endsWith("/") ? base : base + "/";
+  const here = root + dayFolder(day);
   const [cellsText, forecastsText, rollupText, layersText, palettesText, modelsText] =
-    await Promise.all(TABLES.map((name) => fetch(root + name).then((r) => {
-      if (!r.ok) throw new Error(`${name}: HTTP ${r.status}`);
-      return r.text();
-    })));
+    await Promise.all(TABLES.map((name) => (
+      PER_DAY.has(name) ? tableText(here + name, root + name)
+                        : tableText(root + name))));
   const style = {
     layers: toObjects(parseCsv(layersText)),
     palettes: toObjects(parseCsv(palettesText)),
@@ -289,6 +327,13 @@ export async function loadRelease(base) {
   };
   const release = buildRelease(style, cellsText, forecastsText, rollupText);
   release.run = await loadRun(root);
+  release.day = day | 0;
+  // What the run says about the whole horizon, not just this day: the panel needs
+  // to tell "no warnings today" apart from "this model does not forecast this far
+  // ahead", and only the run record knows the difference.
+  release.horizon = Math.max(1, (release.run && release.run.horizon_days) | 0 || 1);
+  release.days = (release.run && Array.isArray(release.run.days))
+    ? release.run.days : null;
   // The flash polygons are fetched lazily, only if the overlay is switched on,
   // so the release carries the address rather than the file.
   release.flashUrl = root + "flash_areas.geojson";
