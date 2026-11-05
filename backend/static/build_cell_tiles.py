@@ -16,10 +16,11 @@ was the map: the cell appeared in cells.csv with a severity and had no hexagon,
 so it could not be drawn, hovered, clicked or reported on, and nothing said so.
 
 Hawaii is the case that found it. 36 cells flagged by GloFAS, 31 of them extreme,
-and no geometry for any of them — because the impact table is built from HUC12
-basins, which have never heard of Hawaii. Nor, it turns out, have the GEOGLOWS
-stream crosswalk or HydroRIVERS: all three descend from the same hydrography and
-share its blind spots, so unioning them changes nothing there. Only GloFAS's own
+and no geometry for any of them — because every source of the cell universe at the
+time descended from the same hydrography, and that hydrography has never heard of
+Hawaii. The GEOGLOWS stream crosswalk, HydroRIVERS and the impact table as it was
+then built (from HUC12 basins, since replaced by an H3-native one) share a blind
+spot, so unioning them changes nothing there. Only GloFAS's own
 0.05-degree river mask knows those cells exist, which is why the patch file in
 C.CELL_UNIVERSE_SOURCES is part of the design rather than a workaround.
 

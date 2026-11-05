@@ -441,6 +441,10 @@ export function renderPanel(props) {
   };
 
   const imp = selected ? props.impact : null;
+  // A unit belongs to a quantity. On a blank or a zero there is no quantity for it
+  // to belong to, and "— km²" reads like a measurement that came back empty rather
+  // than like nothing being there.
+  const measured = (v, unit) => fmtCount(v) + (v ? " " + unit : "");
   const impTile = (name, label, value, span) =>
     `<div class="${span ? "col-span-2 " : ""}rounded-lg border border-slate-200 bg-slate-50 px-2.5 py-2">` +
     `<div class="flex items-center gap-1 text-slate-600 text-[10px] font-semibold uppercase tracking-wide mb-1">${icon(name, "text-[12px]")}${label}</div>` +
@@ -451,10 +455,20 @@ export function renderPanel(props) {
       `<span class="flex items-center gap-1.5">${icon("exclamation-triangle", "text-amber-500 text-sm")}Impact</span>${collapseBtn("sec-impact")}</h3>` +
       bodyTag("sec-impact") + `<div class="grid grid-cols-2 gap-2">` +
       impTile("building-office-2", "Buildings", fmtCount(imp.buildings)) +
-      impTile("area-hash-filled", "Farmland", fmtCount(imp.farmland_m2 / 1e6) + " km²") +
-      impTile("car-travel-mode", "Roads", fmtCount(imp.highway_km) + " km") +
-      impTile("train-travel-mode", "Railways", fmtCount(imp.railway_km) + " km") +
-      impTile("users", "Population", fmtCount(imp.population), true) +
+      impTile("users", "Population", fmtCount(imp.population)) +
+      // Roads and railways used to be two tiles. The table merges them, so there
+      // is nothing to split; "Transport" rather than "Roads" because calling a
+      // figure that includes railways "Roads" would be the wrong label, not a
+      // shorter one.
+      impTile("car-travel-mode", "Transport", measured(imp.transportation_km, "km")) +
+      impTile("spaces", "Bridges", fmtCount(imp.bridges)) +
+      // km² already — the impact table changed units. Dividing again here is the
+      // factor-of-a-million mistake this comment exists to prevent.
+      impTile("area-hash-filled", "Farmland", measured(imp.farmland_km2, "km²")) +
+      // One tile: a weir is a low dam, both are counted the same way off OSM, and
+      // two tiles reading 0 and 0 side by side said less than one reading 0.
+      impTile("trapezoid-area", "Dams/Weirs",
+              fmtCount((imp.dams || 0) + (imp.weirs || 0))) +
       `</div><p class="text-slate-500 text-[12px] mt-1.5">Totals across the whole ${unitLabel(props).toLowerCase()}.</p></div></div>`
     : "";
 

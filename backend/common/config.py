@@ -9,9 +9,10 @@ The backend runs in two tiers, and the folder layout says which is which:
                       csv -> map rules
 
 The daily tier joins the static tables rather than recomputing them, which is
-what keeps a run short: the HUC12 impact apportionment and the ADM cascade are
-the slowest things in the whole pipeline and neither answer changes between
-releases.
+what keeps a run short: the ADM cascade is the slowest thing left in the pipeline
+and its answer does not change between releases. Impact is not computed here at
+all any more -- the Flood Impact Model project publishes a table keyed by H3 cell
+and this joins it, cell for cell, with no apportionment anywhere in the path.
 
 Everything user-facing about severity lives here, so the ladder is stated once
 and every step (and eventually the front end's rules file) reads the same values.
@@ -489,7 +490,35 @@ CELL_COLUMNS = ["h3_id", "res", "day", "severity", "model_count", "models",
 # are written back over the same files rather than into a second delivered copy:
 # every added column is new, and each step reads only columns it wrote or found,
 # so re-running one is safe and leaves one set of files per release.
-IMPACT_FIELDS = ["population", "buildings", "farmland_m2", "highway_km", "railway_km"]
+# Built by the Flood Impact Model project, not by this one: it writes an H3 r6
+# table and this reads it. The columns and their units are its contract, recorded
+# beside the data in cell_impact_r6_metadata.csv -- read that before assuming what
+# a number means, because two of these have already changed shape once.
+#
+#   population         people          WorldPop 2024 constrained 1 km (R2025A)
+#   buildings          count           OSM footprint centres
+#   farmland_km2       km2             ESA WorldCover 2021 cropland
+#   transportation_km  km              OSM roads AND railways, together
+#   bridges            count           OSM bridge=* segment centres
+#   dams               count           OSM waterway=dam
+#   weirs              count           OSM waterway=weir, check_dam
+#
+# TWO THINGS CHANGED when this replaced the table this pipeline used to build for
+# itself (by apportioning HUC12 basin statistics across the cells each basin
+# covered; that script is gone, and nothing here distributes anything any more).
+# Both changes are the silent kind:
+#
+#   farmland is km2 now, not m2. The panel used to divide by 1e6 and no longer
+#   does. Getting this wrong is a factor of a million, in the direction that makes
+#   a field look like a continent.
+#
+#   roads and railways are ONE column. They cannot be shown apart any more, which
+#   is a real loss and not a rename -- the upstream table does not carry them
+#   separately, so no amount of work here brings the distinction back.
+IMPACT_FIELDS = ["population", "buildings", "farmland_km2", "transportation_km",
+                 "bridges", "dams", "weirs"]
+# Which of those are whole things rather than measurements, for step 4's rounding.
+IMPACT_COUNT_FIELDS = {"population", "buildings", "bridges", "dams", "weirs"}
 CELL_DELIVERY_COLUMNS = CELL_COLUMNS + IMPACT_FIELDS
 FORECAST_DELIVERY_COLUMNS = FORECAST_COLUMNS + ["district", "district_level"]
 

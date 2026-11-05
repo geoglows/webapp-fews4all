@@ -26,6 +26,8 @@ import calciteCarTravelMode from "@esri/calcite-ui-icons/icons/car-travel-mode-1
 import calciteTrainTravelMode from "@esri/calcite-ui-icons/icons/train-travel-mode-16.svg?raw";
 import calciteMonitor from "@esri/calcite-ui-icons/icons/monitor-16.svg?raw";
 import calciteCursor from "@esri/calcite-ui-icons/icons/cursor-16.svg?raw";
+import calciteSpaces from "@esri/calcite-ui-icons/icons/spaces-16.svg?raw";
+import calciteTrapezoidArea from "@esri/calcite-ui-icons/icons/trapezoid-area-16.svg?raw";
 
 const ICONS = {
   "arrow-top-right-on-square": arrowTopRightOnSquare,
@@ -49,7 +51,9 @@ const ICONS = {
   "car-travel-mode":calciteCarTravelMode,
   "train-travel-mode":calciteTrainTravelMode,
   "monitor": calciteMonitor,
-  "cursor": calciteCursor
+  "cursor": calciteCursor,
+  "spaces": calciteSpaces,
+  "trapezoid-area": calciteTrapezoidArea
 };
 
 // Filled icons whose paths carry no `fill` (so they'd default to black): inject

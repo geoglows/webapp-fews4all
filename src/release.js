@@ -97,7 +97,10 @@ export function buildRelease(style, cellsText, forecastsText, rollupText) {
 
   const cells = new Map();
   const cellRows = toObjects(parseCsv(cellsText));
-  const impactFields = ["population", "buildings", "farmland_m2", "highway_km", "railway_km"];
+  // Matches backend/common/config.py IMPACT_FIELDS. Roads and railways are one
+  // column now, and farmland arrives in km² rather than m² — see the note there.
+  const impactFields = ["population", "buildings", "farmland_km2",
+                        "transportation_km", "bridges", "dams", "weirs"];
   for (const r of cellRows) {
     // Present when the backend wrote numbers at all, even if every one is zero.
     // Blank means no impact data reached the cell; zero means it did and the

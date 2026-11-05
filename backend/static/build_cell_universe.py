@@ -49,8 +49,8 @@ It is the only slow part — roughly half an hour for 218 countries — and it d
 not change between runs. So it is written to a cache the first time and read back
 afterwards, and while it runs it checkpoints per country: the cells go to a part
 file and the finished countries to a done file, so an interruption resumes rather
-than starting over. The same bargain build_impact_table.py makes, for the same
-reason. Delete the cache, or pass --refresh-land, to rebuild it.
+than starting over — the right bargain for any build long enough that someone
+will interrupt it. Delete the cache, or pass --refresh-land, to rebuild it.
 
 A SOURCE THAT CANNOT BE READ IS SKIPPED, NEVER FATAL
 

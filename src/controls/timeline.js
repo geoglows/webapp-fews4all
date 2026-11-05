@@ -21,11 +21,13 @@
 // parsing the day's CSVs, which is why release.js caches parsed days and why this
 // prefetches ahead of playback.
 //
-// COLLAPSED BY DEFAULT
+// OPEN BY DEFAULT
 //
-// A map is for looking at. The bar shows only the date until it is asked for, so
-// the thing most users want most of the time — today's warnings — is not sharing
-// the screen with a control they will touch once.
+// It was collapsed, on the reasoning that a map is for looking at and the bar is
+// a control you touch once. That held while it only went backwards. Now that the
+// forecast half is the point — the thing the app is FOR is stepping forward — a
+// bar that has to be discovered before it can be used is hiding the feature.
+// Closing it still works, and it stays closed for the rest of the session.
 //
 // PARTIAL DAYS ARE MARKED, NOT HIDDEN
 //
@@ -60,7 +62,7 @@ const PREFETCH = 2;           // days to pull ahead of the cursor during playbac
 let frames = [];              // [{release, day, kind, meta, empty}]
 let idx = 0;                  // which frame is showing
 let home = 0;                 // the frame for today — where the bar opens
-let open = false;
+let open = true;
 let timer = null;
 let host = null;
 let actions = {show: () => {}, prefetch: () => {}};
@@ -185,7 +187,7 @@ function collapsed(f) {
     : "";
   return `
     <div class="pointer-events-auto mx-auto mb-6 w-fit flex items-center gap-2
-                rounded-full bg-white/95 shadow-md ring-1 ring-slate-300 px-3 py-1.5">
+                rounded-full bg-white shadow-md ring-1 ring-slate-300 px-3 py-1.5">
       <button id="tl-open" title="Browse days and forecasts"
               class="flex items-center gap-1.5 text-[12.5px] text-slate-700 hover:text-slate-900">
         ${icon("clock", "text-[13px] text-sky-600")}
@@ -223,12 +225,16 @@ function expanded(f) {
   // and disappears as the timeline moves, and if it were allowed to size this
   // block the track would grow and shrink under the cursor — the ticks would
   // shift sideways mid-scrub, which is maddening to aim at.
+  //
+  // It wraps to two lines rather than truncating. "without flash, flood_hub, gl…"
+  // named two of the three models that were missing and then gave up, which is
+  // the one thing this note exists to say. The height is fixed for the same
+  // reason the width is, so growing to a second line does not move anything.
   const noteStr = noteText(f);
   const tone = isForecast(f) ? (f.empty ? "text-slate-400" : "text-sky-700")
                              : "text-amber-700";
-  const note = noteStr
-    ? `<div class="text-[10.5px] ${tone} truncate" title="${noteStr}">${noteStr}</div>`
-    : `<div class="text-[10.5px] text-slate-400">&nbsp;</div>`;
+  const note = `<div class="text-[10.5px] ${tone} leading-[1.25] h-[26px] overflow-hidden"
+       title="${noteStr}">${noteStr || "&nbsp;"}</div>`;
 
   const step = (id, glyph, label, off) => `
     <button id="${id}" title="${label}" aria-label="${label}" ${off ? "disabled" : ""}
@@ -253,7 +259,7 @@ function expanded(f) {
              ${atHome ? "invisible pointer-events-none" : ""}">Today</button>`;
 
   return `
-    <div class="pointer-events-auto mx-3 mb-6 rounded-xl bg-white/95 shadow-lg
+    <div class="pointer-events-auto mx-3 mb-6 rounded-xl bg-white shadow-lg
                 ring-1 ring-slate-300 px-3 py-2">
       <div class="flex items-center gap-2.5">
         <button id="tl-play" title="${timer ? "Pause" : "Play through the days"}"
@@ -274,7 +280,7 @@ function expanded(f) {
         ${step("tl-next", "▶", "Next day", idx === last)}
         ${todayBtn}
 
-        <div class="shrink-0 w-[150px] text-right leading-tight">
+        <div class="shrink-0 w-[196px] text-right leading-tight">
           <div class="text-[12.5px] font-semibold text-slate-800 tabular-nums">${frameLabel(f)}</div>
           ${note}
         </div>
@@ -392,7 +398,7 @@ export function build(index, showing, run) {
 
   if (!host || frames.length < 2) { if (host) host.innerHTML = ""; return; }
   idx = home;
-  open = false;
+  open = true;
   render();
 }
 

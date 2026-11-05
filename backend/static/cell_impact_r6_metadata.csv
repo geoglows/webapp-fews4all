@@ -1,0 +1,9 @@
+column,unit,description,source,aoi,run_date
+h3_id,,"H3 cell index (resolution 6), lowercase hex string",H3 (Uber) v4,h3_6,2026-11-05
+population,people,Population in the cell,"WorldPop 2024 constrained 1 km (UN-adjusted, R2025A)",h3_6,2026-11-05
+buildings,count,OSM buildings whose footprint centre is in the cell,OpenStreetMap (Geofabrik extracts),h3_6,2026-11-05
+farmland_km2,km2,Cropland area in the cell,ESA WorldCover 2021 v200 (class 40 cropland),h3_6,2026-11-05
+transportation_km,km,"Roads (motorway, trunk, primary, secondary, tertiary, residential, links, living street, busway, footway, cycleway) plus railways (rail, light rail, subway, monorail, tram)",OpenStreetMap (Geofabrik extracts),h3_6,2026-11-05
+bridges,count,"OSM road/rail segments tagged bridge=* (not 'no'), by segment centre",OpenStreetMap (Geofabrik extracts),h3_6,2026-11-05
+dams,count,"OSM waterway=dam features (lines, areas, points), by feature centre",OpenStreetMap (Geofabrik extracts),h3_6,2026-11-05
+weirs,count,"OSM waterway=weir and check_dam features, by feature centre",OpenStreetMap (Geofabrik extracts),h3_6,2026-11-05

@@ -93,7 +93,7 @@ def tidy(values, found):
         return [""] * len(C.IMPACT_FIELDS)
     out = []
     for field, v in zip(C.IMPACT_FIELDS, values):
-        out.append(int(round(v)) if field in ("population", "buildings") else round(v, 1))
+        out.append(int(round(v)) if field in C.IMPACT_COUNT_FIELDS else round(v, 1))
     return out
 
 

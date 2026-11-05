@@ -49,14 +49,29 @@ html, body {
     max-width: none;
 }
 
-/* Current-resolution readout, bottom-left */
-.res-readout {
-    background: rgb(255 255 255 / 0.92);
-    padding: 3px 9px;
-    border-radius: 6px;
-    font: 600 12px system-ui, sans-serif;
-    color: #0f172a;
-    box-shadow: 0 1px 4px rgb(0 0 0 / 0.35);
+/* Current-resolution readout, bottom-left.
+ *
+ * Styled as a copy of MapLibre's own attribution line in the opposite corner —
+ * same inherited 12px/20px face, same 50% white, same `padding: 0 5px` and no
+ * margin. That is not only for looks: the attribution is the one thing already
+ * proven to sit in the strip beneath the timeline without being covered by it,
+ * so matching it is what guarantees this fits. A taller, padded, shadowed box
+ * was the thing the bar kept sitting on top of.
+ *
+ * Deliberately inherits colour and weight rather than setting them. The pair
+ * read as one line of map chrome, which is what they are.
+ *
+ * The long selector is doing real work. MapLibre sets
+ * `.maplibregl-ctrl-bottom-left .maplibregl-ctrl { margin: 0 0 10px 10px }`,
+ * which is two classes, and this file is imported BEFORE maplibre-gl.css (see
+ * main.js) — so a plain `.res-readout` loses the margin fight twice over and the
+ * readout keeps the 10px that lifts it into the timeline. Three classes beats it
+ * whatever the import order. The attribution dodges this by being styled inside
+ * MapLibre's own sheet, which is a luxury this rule does not have. */
+.maplibregl-ctrl-bottom-left .maplibregl-ctrl.res-readout {
+    padding: 0 5px;
+    margin: 0;
+    background-color: hsla(0, 0%, 100%, 0.5);
 }
 
 /* Base-map switcher: an icon button that opens a gallery of thumbnails. The

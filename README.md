@@ -234,8 +234,11 @@ top of the script switches it back to `river_id`); repeat crossings of one reach
 through one cell are collapsed, so a cell lists a reach once. Flood Hub gauges have
 no crosswalk entry and are binned by their own coordinate. Res 6 rolls up to 5/4/3
 through the H3 parent hierarchy. Each forecast gets its ADM2 district, and each cell
-gets HUC12 impact statistics split by overlapping area (a hexagon ignores basin
-boundaries, so whole-HUC12 sums would double-count).
+gets its impact statistics straight from `backend/static/cell_impact_r6.csv`,
+which the Flood Impact Model project publishes keyed by H3 cell. A res-6 cell
+takes its own row unchanged; a coarser cell is the plain sum of its children.
+Nothing is apportioned or area-weighted — an earlier version split HUC12 basin
+totals across the cells each basin overlapped, and that step no longer exists.
 
 ### Basin (HydroBASINS) pipeline
 
