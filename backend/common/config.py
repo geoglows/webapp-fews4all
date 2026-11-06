@@ -25,15 +25,178 @@ HERE = os.path.dirname(os.path.abspath(__file__))     # backend/common
 BACKEND = os.path.dirname(HERE)                       # backend
 ROOT = os.path.dirname(BACKEND)                       # <repo>
 
-# Where the operator drops a release's native model files. Overridable so a run
-# can be pointed at an archived release without moving anything.
-INPUT_DIR = os.environ.get("FEWS_INPUT") or os.path.join(BACKEND, "input")
-OUTPUT_DIR = os.environ.get("FEWS_OUTPUT") or os.path.join(BACKEND, "output")
+# ---- where everything lives ------------------------------------------------
+# One tree, dated, holding both what was downloaded and what was published:
+#
+#   fews4all_data/
+#     current_release.txt          the day the map opens on
+#     releases.json                every release, summarised
+#     YYYY/MM/DD/
+#       raw_downloads/
+#         rfs/        mapstyletable_<vpu>_<cycle>.parquet
+#         glofas/     sumAL_*.nc, summary_alerts_*.nc, RPG_U<cycle>.{shp,...}
+#         floodhub/   world_flood_status_<date>.json, urban_flash_floods_<date>.geojson
+#         fetch.json  what arrived, when, and how big
+#       processed/
+#         release.json        the run record, the day manifest and the style tables
+#         cell_index.json     which forecast is in which cell, at every resolution
+#         day_NN.json         that forecast day's cells and forecasts
+#         flash_areas.geojson
+#         summary_<date>.csv  every forecast in the release, for a person
+#
+# WHY THE DATE IS IN THE PATH AND NOT THE FILENAME. The tree is built to be
+# copied to a bucket as-is, and a bucket is a flat namespace pretending to be a
+# tree -- YYYY/MM/DD sorts, lists and lifecycle-rules cleanly, where a thousand
+# files called forecasts.csv in one prefix do not. The Flood Hub files keep their
+# date in the NAME as well, because they are the two a person is most likely to
+# download on their own, and a file that leaves the tree loses the only copy of
+# its date.
+#
+# THE APP READS THIS DIRECTLY. There is no second published layout, so a path
+# here is a URL there: see OUTPUT_BASE in src/sources.js, which is a relative
+# path today and a bucket URL the day it moves.
+DATA_DIR = os.environ.get("FEWS_DATA") or os.path.join(ROOT, "fews4all_data")
+
+# Kept because a few tools still take an explicit folder, and because a run can
+# be pointed at one release without moving anything. Both now resolve INSIDE the
+# dated tree rather than naming trees of their own.
+INPUT_DIR = os.environ.get("FEWS_INPUT") or DATA_DIR
+OUTPUT_DIR = os.environ.get("FEWS_OUTPUT") or DATA_DIR
+
+# The three model folders under raw_downloads. `rfs` rather than `geoglows`
+# because that is the product's own name -- the parquets say River Forecast
+# System v3 -- and the key this pipeline uses internally is a separate thing.
+RAW_DIRS = {"geoglows": "rfs", "glofas": "glofas",
+            "flood_hub": "floodhub", "flash": "floodhub"}
+
+# Which models' raw downloads the archive KEEPS once a run has published.
+#
+# GEOGLOWS does not. Its map-tables are 1.9 GB a morning -- about 90% of
+# everything this pipeline downloads -- and it is the one feed that is genuinely
+# re-fetchable: the bucket holds roughly 110 cycles, so any day inside three
+# months can be pulled again and any day outside it was never going to be.
+# Keeping them would cost some 700 GB a year to store a second copy of what
+# someone else is already storing, for the days where it is not needed.
+#
+# The other two stay. GloFAS is 190 MB and the archive this pipeline can reach
+# does not go back far. Flood Hub is one megabyte and has no archive AT ALL --
+# searchLatestFloodStatus answers for right now and keeps nothing -- so the file
+# under floodhub/ is the only copy of that morning that will ever exist. It is
+# the smallest thing here and the only irreplaceable one.
+#
+# The cost of dropping GEOGLOWS: re-running an old day needs its parquets
+# fetched again. That is a few minutes inside the bucket's window, and impossible
+# outside it, which is the trade being made.
+RAW_KEEP = {"geoglows": False, "glofas": True, "flood_hub": True, "flash": True}
+
+
+def prune_raw(release, root=None):
+    """Delete the raw downloads of every model RAW_KEEP says not to archive.
+
+    Called after a run has published, never before: the files are the input that
+    run just read, and a failure partway through should leave them where step 2
+    can be pointed at them again.
+    """
+    import shutil
+    freed = []
+    for model, keep in RAW_KEEP.items():
+        if keep:
+            continue
+        d = raw_dir(release, model, root)
+        if not os.path.isdir(d):
+            continue
+        size = sum(os.path.getsize(os.path.join(d, f)) for f in os.listdir(d)
+                   if os.path.isfile(os.path.join(d, f)))
+        shutil.rmtree(d, ignore_errors=True)
+        if not os.path.isdir(d):
+            freed.append((RAW_DIRS[model], size))
+    return freed
+
+
+def release_dir(release, root=None):
+    """`2026-11-05` -> <data>/2026/11/05. The one place a date becomes a path."""
+    y, m, d = str(release).split("-")[:3]
+    return os.path.join(root or DATA_DIR, y, m, d)
+
+
+def raw_dir(release, model=None, root=None):
+    """<release>/raw_downloads[/<model folder>]."""
+    base = os.path.join(release_dir(release, root), "raw_downloads")
+    return os.path.join(base, RAW_DIRS[model]) if model else base
+
+
+def raw_dir_under(release_dir_path, model):
+    """<some release folder>/raw_downloads/<model folder>.
+
+    Takes the FOLDER rather than the date, because the readers are handed a
+    folder and a release may be pointed at by hand. Returns None for a model with
+    no raw folder of its own, so callers can skip it without a special case.
+    """
+    name = RAW_DIRS.get(model)
+    return os.path.join(release_dir_path, "raw_downloads", name) if name else None
+
+
+def processed_dir(release, root=None):
+    """<release>/processed -- what the map fetches."""
+    return os.path.join(release_dir(release, root), "processed")
+
+
+def list_releases(root=None):
+    """Every published release in the dated tree, oldest first, as `YYYY-MM-DD`.
+
+    A release counts when it has a processed/ folder. The raw_downloads for a day
+    can exist without it -- a run that fetched and then failed leaves exactly
+    that -- and a half-published day must not appear in the index as if the map
+    could draw it.
+
+    The walk is three shallow listdirs rather than os.walk, because the tree is
+    also the raw archive: walking it would descend into a hundred and sixty
+    parquets per day for no reason.
+    """
+    root = root or DATA_DIR
+    if not os.path.isdir(root):
+        return []
+    out = []
+    for y in os.listdir(root):
+        if not re.fullmatch(r"\d{4}", y):
+            continue
+        for m in os.listdir(os.path.join(root, y)):
+            if not re.fullmatch(r"\d{2}", m):
+                continue
+            for d in os.listdir(os.path.join(root, y, m)):
+                if not re.fullmatch(r"\d{2}", d):
+                    continue
+                if os.path.isdir(os.path.join(root, y, m, d, "processed")):
+                    out.append(f"{y}-{m}-{d}")
+    return sorted(out)
+
+
+def release_of_path(path):
+    """<data>/2026/11/05/... -> `2026-11-05`, or None. The inverse of release_dir,
+    so a folder handed to a step still knows which day it is."""
+    parts = os.path.normpath(os.path.abspath(path)).split(os.sep)
+    for i in range(len(parts) - 3, -1, -1):
+        y, m, d = parts[i:i + 3]
+        if re.fullmatch(r"\d{4}", y) and re.fullmatch(r"\d{2}", m) and re.fullmatch(r"\d{2}", d):
+            return f"{y}-{m}-{d}"
+    return None
 
 FILES = os.path.join(ROOT, "Files")                   # static reference data
+
+# backend/static holds the builders (code) and what they built. The two are kept
+# apart so the directory says which is which:
+#
+#   tables/  big derived tables, parquet. Rebuildable by the build_*.py beside
+#            them, which is what makes them safe to keep out of git.
+#   ref/     small files a person reads or edits by hand, and caches small enough
+#            to be worth keeping: country codes, the patch list of cells the
+#            automated sources miss, the record of what the blackout box hides.
+#   tiles/   the PMTiles archives the map draws from.
+STATIC_TABLES = os.path.join(BACKEND, "static", "tables")
+STATIC_REF = os.path.join(BACKEND, "static", "ref")
 # h3_id (res 6) -> river_id, report_id. The reach crosswalk: every cell a
 # GEOGLOWS reach passes through, which is how a line becomes a set of cells.
-CROSSWALK_CSV = os.path.join(FILES, "h3_streams_global_r6.csv")
+CROSSWALK_TABLE = os.path.join(FILES, "h3_streams_global_r6.parquet")
 # `river_id`, NOT `report_id`. The two columns answer different questions and this
 # was joined on the wrong one, silently and with a bias.
 #
@@ -58,7 +221,7 @@ CROSSWALK_ID_COL = "river_id"
 # Where each GEOGLOWS v2 reach is. Built by static/build_reach_points.py.
 # The daily map-tables carry no coordinates, and admin.assign places a forecast by
 # coordinate alone, so without this every GEOGLOWS forecast loses its district.
-REACH_POINTS = os.path.join(BACKEND, "static", "reach_points_v2.parquet")
+REACH_POINTS = os.path.join(STATIC_TABLES, "reach_points_v2.parquet")
 
 # ---- the clock -------------------------------------------------------------
 # EVERYTHING IN THIS PIPELINE IS UTC. Not a preference — the models leave no
@@ -101,6 +264,30 @@ MANIFEST_BASELINE_N = 10          # how many past releases the volume check aver
 # newer one) and a step 2 that died midway (the later steps would happily decorate
 # a half-written folder). A step that finds no pointer still falls back to newest,
 # because refusing to run at all is the worse failure.
+# ---- what processed/ is called ---------------------------------------------
+# Named here so the backend writes them and the front end fetches them from one
+# list, rather than two lists that agree until someone renames a file.
+PROCESSED = {
+    # The run record, the per-day manifest and the three style tables, together.
+    # Four small files that were always read together and never apart.
+    "release": "release.json",
+    # Which forecast sits in which cell, at every resolution. Day-independent --
+    # a forecast's cell never moves -- so it is fetched once per release.
+    "cell_index": "cell_index.json",
+    # Every forecast in the release, once, with the day span it speaks for. NOT
+    # split per day: a GloFAS row spanning days 0-3 would be written into four
+    # files and an undated Flood Hub gauge into all sixteen, which measured at
+    # 5.9 MB of pure duplication per release. Cells genuinely differ by day and
+    # stay split; forecasts do not and no longer are.
+    "forecasts": "forecasts.json",
+    # One per forecast day: that day's cells. The client picks the forecasts for
+    # the day out of the table above, which it has already fetched.
+    "day": "day_{day:02d}.json",
+    "flash": "flash_areas.geojson",
+    # For a person, not for the map. Every forecast in the release, one row each.
+    "summary": "summary_{release}.csv",
+}
+
 RELEASE_POINTER = "current_release.txt"
 
 # Every release the output directory holds, summarised for the time slider. The
@@ -163,7 +350,10 @@ INPUT_GLOBS = {
     # 10-day horizon, against ~81 global CSVs of one timestep each. The CSV
     # pattern is kept so an archived release can still be rerun in place.
     "geoglows": ["mapstyletable*.parquet", "mapstyletable*.csv"],
-    "flood_hub": ["world_flood_status*.csv", "Flood_Hub_Global*.csv"],
+    # JSON first: it is what step 1 writes now. The CSVs stay matched so an
+    # archived release from before the change still loads.
+    "flood_hub": ["world_flood_status*.json", "world_flood_status*.csv",
+                  "Flood_Hub_Global*.csv"],
     # The 2-year grid. The other two levels sit beside it under the same stamp,
     # and the reporting points (RPG_U*.shp) ride along as an attribute overlay.
     "glofas": ["sumAL_medium_AL*.nc"],
@@ -259,7 +449,7 @@ GEOGLOWS_PRODUCT = "parquet"
 # being printed and forgotten.
 FLOOD_HUB_BASE = "https://floodforecasting.googleapis.com/v1"
 FLOOD_HUB_KEY_ENV = "FLOODS_API_KEY" # RILEY'S API KEY
-COUNTRY_CODES = os.path.join(BACKEND, "static", "country_codes.csv")
+COUNTRY_CODES = os.path.join(STATIC_REF, "country_codes.csv")
 
 # Severities that count as "this gauge has a warning", and so earn the extra
 # round trips that fetch discharge, peak timing and return period.
@@ -286,8 +476,8 @@ FLASH_POLYGON_TYPES = [("likely", "likelyAffectedPolygonId"),
 # A gauge's thresholds are a property of the gauge; a flash polygon is a fixed
 # ~20km urban cell. Re-downloading either every morning is the same mistake as
 # re-downloading a reach's coordinates was.
-FLOOD_HUB_MODEL_CACHE = os.path.join(BACKEND, "static", "flood_hub_gauge_models.json")
-FLASH_POLYGON_CACHE = os.path.join(BACKEND, "static", "flash_polygons.json")
+FLOOD_HUB_MODEL_CACHE = os.path.join(STATIC_REF, "flood_hub_gauge_models.json")
+FLASH_POLYGON_CACHE = os.path.join(STATIC_REF, "flash_polygons.json")
 
 # ---- where the GloFAS forecast comes from -----------------------------------
 # ECMWF's Auxiliary Data Store, over HTTPS rather than the FTP the CEMS wiki
@@ -522,7 +712,7 @@ IMPACT_COUNT_FIELDS = {"population", "buildings", "bridges", "dams", "weirs"}
 CELL_DELIVERY_COLUMNS = CELL_COLUMNS + IMPACT_FIELDS
 FORECAST_DELIVERY_COLUMNS = FORECAST_COLUMNS + ["district", "district_level"]
 
-CELL_IMPACT_TABLE = os.path.join(BACKEND, "static", "cell_impact_r6.csv")
+CELL_IMPACT_TABLE = os.path.join(STATIC_TABLES, "cell_impact_r6.parquet")
 
 
 # geoBoundaries CGAZ, tried finest first. ADM2 does not tile every country —
@@ -683,8 +873,8 @@ RES_ZOOM_STEP = 2
 # a little further (127 cells against 83) but gives up this id join, which resolves
 # two thirds of the gauges exactly rather than by a spatial guess.
 HYDRORIVERS_SHP = os.path.join(INPUT_DIR, "HydroRIVERS_v10", "HydroRIVERS_v10.shp")
-HYDRORIVERS_TOPOLOGY_CSV = os.path.join(BACKEND, "static", "hydrorivers_topology.csv")
-HYDRORIVERS_CROSSWALK_CSV = os.path.join(BACKEND, "static", "h3_hydrorivers_r6.csv")
+HYDRORIVERS_TOPOLOGY_TABLE = os.path.join(STATIC_TABLES, "hydrorivers_topology.parquet")
+HYDRORIVERS_CROSSWALK_TABLE = os.path.join(STATIC_TABLES, "h3_hydrorivers_r6.parquet")
 # ---- the cell universe ----------------------------------------------------
 # Which cells the geometry archive covers. This used to BE the impact table, and
 # that coupling was a bug: a cell needs geometry because something can flag it,
@@ -706,15 +896,15 @@ HYDRORIVERS_CROSSWALK_CSV = os.path.join(BACKEND, "static", "h3_hydrorivers_r6.c
 # Written by static/build_cell_universe.py as a union of land, the crosswalks
 # and the GloFAS river mask. Read by the tile build as its universe, and by
 # nothing else — in particular it is never used to filter a forecast.
-CELL_UNIVERSE = os.path.join(BACKEND, "static", "cell_universe_r6.csv")
+CELL_UNIVERSE = os.path.join(STATIC_TABLES, "cell_universe_r6.parquet")
 # Superseded by CELL_UNIVERSE; kept as a source so an existing patch file is
 # still honoured rather than silently dropped.
-CELL_UNIVERSE_EXTRA = os.path.join(BACKEND, "static", "cell_universe_extra.csv")
+CELL_UNIVERSE_EXTRA = os.path.join(STATIC_REF, "cell_universe_extra.csv")
 CELL_UNIVERSE_SOURCES = [
     (CELL_UNIVERSE, 0),               # the registry, once built
     (CELL_IMPACT_TABLE, 0),
-    (CROSSWALK_CSV, 0),                    # GEOGLOWS reaches
-    (HYDRORIVERS_CROSSWALK_CSV, 0),        # Flood Hub's network
+    (CROSSWALK_TABLE, 0),                    # GEOGLOWS reaches
+    (HYDRORIVERS_CROSSWALK_TABLE, 0),        # Flood Hub's network
     (CELL_UNIVERSE_EXTRA, 0),              # whatever the above still miss
 ]
 # A gauge whose id is not a `hybas_` code (today: CWC, ANA, BWDB, MOI — 32 of 99)
@@ -785,7 +975,7 @@ GEOGLOWS_BLACKOUT_BOX = (17.0, 57.0, 45.0, 71.0)
 # static/build_suppression.py. NOTHING IN THE DAILY RUN READS THIS -- the box is
 # the rule. It exists so "what are we hiding?" has an answer that does not depend
 # on anyone still having the releases from October 2026.
-GEOGLOWS_SUPPRESSED_CSV = os.path.join(BACKEND, "static", "geoglows_suppressed.csv")
+GEOGLOWS_SUPPRESSED_CSV = os.path.join(STATIC_REF, "geoglows_suppressed.csv")
 
 # ---- river network -------------------------------------------------------
 # Topology read out of the GEOGLOWS v2 model table by static/build_stream_attrs.py,
@@ -810,7 +1000,7 @@ STREAMS_V2_MODEL_TABLE = os.path.join(
 # The v3 tiles stay, for map CONTEXT only -- the stream lines drawn under the
 # hexagons. Nothing in the daily run reads topology from them any more.
 STREAM_TILES_PATH = os.path.join(BACKEND, "static", "tiles", "streams.pmtiles")
-STREAM_ATTRS_CSV = os.path.join(BACKEND, "static", "stream_attrs.csv")
+STREAM_ATTRS_TABLE = os.path.join(STATIC_TABLES, "stream_attrs.parquet")
 # How far downstream to look when deciding whether two flagged reaches are the
 # same channel. Measured: same-channel pairs sat 1 to 4 reaches apart, so this has
 # headroom without being a licence to chain half a basin together.
@@ -831,21 +1021,37 @@ CELLS_PROMOTE_ID = "h3_id"        # feature-state (hover/selection) needs a stab
 
 
 def current_input(input_dir=None):
-    """The input folder step 2 should read: what step 1 last fetched, else the
-    flat input directory itself."""
+    """The release folder step 2 should read.
+
+    What step 1 last fetched, by the pointer it leaves; failing that, the newest
+    day in the tree that actually has raw downloads. The fallback matters more
+    than it used to: the pointer names a date and the date is now a PATH, so a
+    missing or stale pointer used to leave step 2 reading the root of the archive
+    and finding nothing, which looks exactly like a morning when no model
+    delivered.
+    """
     root = input_dir or INPUT_DIR
     try:
         with open(os.path.join(root, INPUT_POINTER), encoding="utf-8") as f:
             name = f.read().strip()
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name):
-            path = os.path.join(root, name)
-            if os.path.isdir(path):
+            path = release_dir(name, root)
+            if os.path.isdir(os.path.join(path, "raw_downloads")):
                 return path
-            print(f"  note: {INPUT_POINTER} names {name}, which does not exist "
-                  f"— using {root}")
+            print(f"  note: {INPUT_POINTER} names {name}, which has no raw "
+                  f"downloads — looking for the newest day instead")
     except OSError:
         pass
-    return root
+
+    days = []
+    for y in sorted(os.listdir(root)) if os.path.isdir(root) else []:
+        if not re.fullmatch(r"\d{4}", y):
+            continue
+        for m in sorted(os.listdir(os.path.join(root, y))):
+            for d in sorted(os.listdir(os.path.join(root, y, m))):
+                if os.path.isdir(os.path.join(root, y, m, d, "raw_downloads")):
+                    days.append((f"{y}-{m}-{d}", os.path.join(root, y, m, d)))
+    return days[-1][1] if days else root
 
 
 def release_pointer(output_dir=None):
@@ -895,9 +1101,5 @@ def latest_release(output_dir=None):
     real release.
     """
     root = output_dir or OUTPUT_DIR
-    if not os.path.isdir(root):
-        return None
-    names = [n for n in os.listdir(root)
-             if re.fullmatch(r"\d{4}-\d{2}-\d{2}", n)
-             and os.path.isdir(os.path.join(root, n))]
-    return os.path.join(root, max(names)) if names else None
+    names = list_releases(root)
+    return release_dir(names[-1], root) if names else None

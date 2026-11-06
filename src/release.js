@@ -92,11 +92,15 @@ const num = (v) => {
  * exact (res, cell) pair; a composite string key keeps that one operation instead
  * of two, and the resolutions are a fixed tiny set so there is nothing to iterate.
  */
-export function buildRelease(style, cellsText, forecastsText, rollupText) {
+/* `style` is {layers, palettes, models}; the other three are arrays of plain
+ * objects, already parsed; `rollupTable` stays in its raw `{columns, rows}` form
+ * because it is the biggest table and is only ever read by position. They used to
+ * be CSV text that this function parsed itself — the parsing moved out when the
+ * published tables became columnar JSON, and nothing else about this changed. */
+export function buildRelease(style, cellRows, forecastRows, rollupTable) {
   const key = (res, id) => `${res}/${id}`;
 
   const cells = new Map();
-  const cellRows = toObjects(parseCsv(cellsText));
   // Matches backend/common/config.py IMPACT_FIELDS. Roads and railways are one
   // column now, and farmland arrives in km² rather than m² — see the note there.
   const impactFields = ["population", "buildings", "farmland_km2",
@@ -130,7 +134,7 @@ export function buildRelease(style, cellsText, forecastsText, rollupText) {
   }
 
   const forecasts = new Map();
-  for (const r of toObjects(parseCsv(forecastsText))) {
+  for (const r of forecastRows) {
     r.severity = (r.severity || "").toLowerCase();
     forecasts.set(r.forecast_uid, r);
   }
@@ -138,10 +142,10 @@ export function buildRelease(style, cellsText, forecastsText, rollupText) {
   // The rollup is the biggest table and only ever read by position, so it is
   // parsed without building an object per row.
   const byCell = new Map();
-  const roll = parseCsv(rollupText);
-  const ir = roll.header.indexOf("res");
-  const ih = roll.header.indexOf("h3_id");
-  const iu = roll.header.indexOf("forecast_uid");
+  const roll = rollupTable || {columns: [], rows: []};
+  const ir = roll.columns.indexOf("res");
+  const ih = roll.columns.indexOf("h3_id");
+  const iu = roll.columns.indexOf("forecast_uid");
   for (const row of roll.rows) {
     const fc = forecasts.get(row[iu]);
     if (!fc) continue;              // a uid with no forecast row cannot be shown
@@ -233,56 +237,49 @@ function buildRules(style, cells) {
 // Every file a release publishes. Named here rather than discovered from a
 // manifest: six fixed names are a convention worth keeping simple, and a manifest
 // would be a seventh file to keep in step with them.
-export const TABLES = ["cells.csv", "forecasts.csv", "cell_forecasts.csv",
-                       "layers.csv", "palettes.csv", "models.csv"];
+/* The five things a release publishes. Named here rather than discovered from a
+ * manifest, because that manifest would be a sixth file to keep in step.
+ *
+ *   release.json      the run record, the day manifest and the style tables —
+ *                     four files that were only ever read together
+ *   forecasts.json    every forecast in the release, once, each carrying the
+ *                     span of days it speaks for. Not split per day: a GloFAS row
+ *                     spanning days 0-3 would be written into four files and an
+ *                     undated Flood Hub gauge into all sixteen
+ *   cell_index.json   which forecast is in which cell, at every resolution.
+ *                     Day-independent: a forecast's cell never moves
+ *   day_NN.json       that forecast day's cells, and only those
+ *
+ * The tables inside them are columnar — `{columns, rows}` — which is what let
+ * them move to JSON for about 6-10% more bytes than the CSVs they replaced once
+ * gzipped, instead of the three times that records-style JSON would have cost.
+ */
+export const RELEASE_FILE = "release.json";
+export const CELL_INDEX_FILE = "cell_index.json";
+export const FORECASTS_FILE = "forecasts.json";
+export const dayFile = (day) => `day_${String(day | 0).padStart(2, "0")}.json`;
 
-// Which of those live under days/dNN/ rather than at the release root. The split
-// is payload, not principle: cells and forecasts are what change from one
-// forecast day to the next, and they are the two big ones. The match table and
-// the three style tables are identical on every day of a release, so fetching
-// them per day would be fetching the same answer fourteen times.
-const PER_DAY = new Set(["cells.csv", "forecasts.csv"]);
-
-/* A release published before the day axis existed has no days/ folder. Vite
- * answers a missing file with index.html and a 200, so `r.ok` is not the test —
- * a body that opens with "<" is. Falling back to the root tables makes every
- * older release load exactly as it used to, which is what lets the timeline carry
- * history across the change instead of starting again at it. */
-async function tableText(url, fallbackUrl) {
-  const get = async (u) => {
-    const r = await fetch(u);
-    if (!r.ok) throw new Error(`HTTP ${r.status}`);
-    const t = await r.text();
-    if (t.trimStart().startsWith("<")) throw new Error("not a table");
-    return t;
-  };
-  try {
-    return await get(url);
-  } catch (err) {
-    if (!fallbackUrl) throw new Error(`${url}: ${err.message}`);
-    try {
-      return await get(fallbackUrl);
-    } catch (err2) {
-      throw new Error(`${fallbackUrl}: ${err2.message}`);
-    }
-  }
+/* `{columns, rows}` -> the array of plain objects the rest of this module
+ * already expects, so nothing downstream learned that the format changed. */
+function fromTable(t) {
+  const cols = (t && t.columns) || [];
+  return ((t && t.rows) || []).map((r) => {
+    const o = {};
+    for (let i = 0; i < cols.length; i++) o[cols[i]] = r[i] === undefined ? "" : r[i];
+    return o;
+  });
 }
 
-export const dayFolder = (day) => `days/d${String(day | 0).padStart(2, "0")}/`;
-
-// The run record step 2 writes beside the tables: which file each model was read
-// from, what it was dated, and whether it was trusted into the release. Optional
-// by design — the map does not need it to draw, so a release published before
-// run.json existed still loads. It is what lets the header say which day is on
-// screen and which models are behind it.
-export async function loadRun(base) {
-  try {
-    const r = await fetch(base + "run.json", {cache: "no-store"});
-    return r.ok ? await r.json() : null;
-  } catch {
-    return null;
-  }
+async function getJson(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`${url}: HTTP ${r.status}`);
+  const text = await r.text();
+  // Vite answers a missing file with index.html and a 200, so `r.ok` is not the
+  // test — a body that opens with "<" is.
+  if (text.trimStart().startsWith("<")) throw new Error(`${url}: not JSON`);
+  return JSON.parse(text);
 }
+
 
 /* Parsed releases, kept by date so scrubbing the timeline does not re-fetch and
  * re-parse ~6 MB of CSV for a day already seen.
@@ -316,27 +313,74 @@ export async function loadReleaseCached(base, key, day = 0) {
   return release;
 }
 
+/* The three files that belong to a RELEASE rather than to one of its days, kept
+ * parsed between day steps.
+ *
+ * Without this, stepping a day re-fetched and re-parsed forecasts.json and
+ * cell_index.json every time — and cell_index is 56,000 rows. The browser would
+ * have served the bytes from its own cache, but the parse happened sixteen times
+ * for an answer that cannot change within a release.
+ *
+ * Two releases, because scrubbing across the join between today and yesterday
+ * should not throw away either. */
+const REL_CACHE_MAX = 2;
+const relCache = new Map();
+
+async function releaseLevel(root) {
+  const hit = relCache.get(root);
+  if (hit) {
+    relCache.delete(root);           // move to the end: evict least recently used
+    relCache.set(root, hit);
+    return hit;
+  }
+  const [rel, forecasts, cellIndex] = await Promise.all([
+    getJson(root + RELEASE_FILE),
+    getJson(root + FORECASTS_FILE),
+    getJson(root + CELL_INDEX_FILE),
+  ]);
+  const entry = {rel, forecastRows: fromTable(forecasts), cellIndex};
+  relCache.set(root, entry);
+  while (relCache.size > REL_CACHE_MAX) relCache.delete(relCache.keys().next().value);
+  return entry;
+}
+
+const inSpan = (r, day) => {
+  const lo = Number(r.day_from || 0);
+  const hi = Number(r.day_to || 0);
+  return lo <= day && day <= hi;
+};
+
 export async function loadRelease(base, day = 0) {
   const root = base.endsWith("/") ? base : base + "/";
-  const here = root + dayFolder(day);
-  const [cellsText, forecastsText, rollupText, layersText, palettesText, modelsText] =
-    await Promise.all(TABLES.map((name) => (
-      PER_DAY.has(name) ? tableText(here + name, root + name)
-                        : tableText(root + name))));
+  const [{rel, forecastRows, cellIndex}, dayData] = await Promise.all([
+    releaseLevel(root),
+    getJson(root + dayFile(day)),
+  ]);
   const style = {
-    layers: toObjects(parseCsv(layersText)),
-    palettes: toObjects(parseCsv(palettesText)),
-    models: toObjects(parseCsv(modelsText)),
+    layers: rel.layers || [],
+    palettes: rel.palettes || [],
+    models: rel.models || [],
   };
-  const release = buildRelease(style, cellsText, forecastsText, rollupText);
-  release.run = await loadRun(root);
+  // The day's forecasts are the ones whose span covers it. Filtering here rather
+  // than publishing sixteen copies is the whole reason forecasts.json is one file.
+  const release = buildRelease(style, fromTable(dayData.cells),
+                               forecastRows.filter((r) => inSpan(r, day)), cellIndex);
+  release.run = rel.run || null;
   release.day = day | 0;
-  // What the run says about the whole horizon, not just this day: the panel needs
-  // to tell "no warnings today" apart from "this model does not forecast this far
-  // ahead", and only the run record knows the difference.
-  release.horizon = Math.max(1, (release.run && release.run.horizon_days) | 0 || 1);
-  release.days = (release.run && Array.isArray(release.run.days))
-    ? release.run.days : null;
+  // What the release says about the whole horizon, not just this day: the panel
+  // needs to tell "no warnings today" apart from "this model does not forecast
+  // this far ahead", and only the record knows the difference.
+  release.horizon = Math.max(1, rel.horizon_days | 0 || 1);
+  release.lastDay = Number.isFinite(Number(rel.last_day)) ? Number(rel.last_day) : null;
+  release.days = Array.isArray(rel.days) ? rel.days : null;
+  // Carried on the run record so the timeline, which is handed only this, can
+  // still see how far each model reaches.
+  if (release.run) {
+    release.run.horizon_days = release.horizon;
+    release.run.last_day = release.lastDay;
+    release.run.days = release.days;
+    release.run.model_reach = rel.model_reach || release.run.model_reach || null;
+  }
   // The flash polygons are fetched lazily, only if the overlay is switched on,
   // so the release carries the address rather than the file.
   release.flashUrl = root + "flash_areas.geojson";

@@ -176,12 +176,12 @@ def main():
     if not os.path.exists(src):
         sys.exit(f"Not found: {src}")
     if "--topology" in sys.argv:
-        build_topology(src, C.HYDRORIVERS_TOPOLOGY_CSV)
+        build_topology(src, C.HYDRORIVERS_TOPOLOGY_TABLE)
     elif "--crosswalk" in sys.argv:
         lim = None
         if "--limit" in sys.argv:
             lim = int(sys.argv[sys.argv.index("--limit") + 1])
-        build_crosswalk(src, C.HYDRORIVERS_CROSSWALK_CSV, lim)
+        build_crosswalk(src, C.HYDRORIVERS_CROSSWALK_TABLE, lim)
     else:
         sys.exit("Pass --topology or --crosswalk")
 

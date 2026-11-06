@@ -17,13 +17,13 @@ rolling up in another is exactly how the two drift apart, and the drift is silen
 the map simply starts claiming concurrence that isn't there.
 
 INPUTS
-    backend/output/<release>/cell_forecasts.csv   (res, cell, forecast) at the
+    <staged>/cell_forecasts.csv   (res, cell, forecast) at the
                                                   base resolution, from step 2
-    backend/output/<release>/forecasts.csv        each forecast's model + severity
+    <staged>/forecasts.csv        each forecast's model + severity
 
 OUTPUTS
-    backend/output/<release>/cells.csv            one row per (cell, resolution)
-    backend/output/<release>/cell_forecasts.csv   the same file, expanded in place
+    <staged>/cells.csv            one row per (cell, resolution)
+    <staged>/cell_forecasts.csv   the same file, expanded in place
                                                   to all four resolutions
 
 Expanding the match table in place rather than writing a second one is what keeps

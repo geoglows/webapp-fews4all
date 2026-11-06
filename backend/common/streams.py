@@ -37,6 +37,7 @@ import csv
 import os
 
 from . import config as C
+from . import tables as T
 
 
 class Network:
@@ -47,28 +48,33 @@ class Network:
         self.outlet = {}
         self.area = {}
         self.loaded = False
-        self.path = path or C.STREAM_ATTRS_CSV
+        self.path = path or C.STREAM_ATTRS_TABLE
 
     def load(self):
         if self.loaded:
             return self
         self.loaded = True
-        if not os.path.exists(self.path):
+        if not os.path.exists(T.table_path(self.path)):
             return self
-        with open(self.path, newline="", encoding="utf-8-sig") as f:
-            for row in csv.DictReader(f):
-                rid = _int(row.get("river_id"))
-                if rid is None:
-                    continue
-                nxt = _int(row.get("next_id"))
-                if nxt is not None:
-                    self.next[rid] = nxt          # blank means terminal; stays absent
-                out = _int(row.get("outlet_id"))
-                if out is not None:
-                    self.outlet[rid] = out
-                a = _float(row.get("ds_cont_area"))
-                if a is not None:
-                    self.area[rid] = a
+        # Columns, not rows. 6.8M reaches as dicts is 6.8M throwaway objects for
+        # four fields; four parallel lists is four.
+        col = T.columns_of(self.path,
+                           ["river_id", "next_id", "outlet_id", "ds_cont_area"])
+        rid_, nxt_ = col["river_id"], col["next_id"]
+        out_, area_ = col["outlet_id"], col["ds_cont_area"]
+        for i, rid in enumerate(rid_):
+            rid = _int(rid)
+            if rid is None:
+                continue
+            nxt = _int(nxt_[i])
+            if nxt is not None:
+                self.next[rid] = nxt          # blank means terminal; stays absent
+            out = _int(out_[i])
+            if out is not None:
+                self.outlet[rid] = out
+            a = _float(area_[i])
+            if a is not None:
+                self.area[rid] = a
         return self
 
     @property

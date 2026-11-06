@@ -28,7 +28,7 @@ reaches here it is a real failure, and the right answer is to leave the publishe
 release exactly as it was and say what happened.
 
     python3 backend/daily/run_daily.py
-    python3 backend/daily/run_daily.py --input backend/input/2026-09-23
+    python3 backend/daily/run_daily.py --input fews4all_data/2026/09/23
     python3 backend/daily/run_daily.py --keep-staging      # leave it for inspection
 """
 
@@ -44,20 +44,46 @@ from common import manifest as MAN      # noqa: E402
 import step2_intersect                  # noqa: E402
 import step3_compare                    # noqa: E402
 import step4_summary                    # noqa: E402
-import step5_rules
-import step6_days                      # noqa: E402
+import step5_publish                      # noqa: E402
 
 
 def rule(title):
     print(f"\n{'=' * 72}\n{title}\n{'=' * 72}")
 
 
-def promote(staged, live):
-    """Move the finished release into place, keeping the old one until it lands.
+def sweep_prev(root):
+    """Delete any <...>.prev left behind by an earlier promote.
 
-    os.replace will not rename onto a non-empty directory, so the published
-    release is stepped aside first. The order matters: if the move fails, the old
-    release is put back, and the app keeps drawing what it was drawing.
+    promote removes its own, and only fails to when the filesystem refuses --
+    which it does often enough on a Mac that one survived from 23 October to 5
+    November unnoticed. Nothing ever retried. One sweep a morning costs nothing
+    and stops a stranded copy of a release sitting there for a fortnight.
+    """
+    gone = 0
+    for dirpath, dirnames, _files in os.walk(root):
+        for d in list(dirnames):
+            if d.endswith(".prev"):
+                try:
+                    shutil.rmtree(os.path.join(dirpath, d))
+                    dirnames.remove(d)
+                    gone += 1
+                except OSError:
+                    pass
+    if gone:
+        print(f"  swept {gone} stale .prev folder(s)")
+
+
+def promote(staged, live):
+    """Move the finished processed/ into place, keeping the old one until it lands.
+
+    ONE FOLDER, not the whole day. The day's folder already holds raw_downloads/,
+    written by step 1 hours earlier and far too large to move twice; only
+    processed/ is republished. So this swaps a child of the release rather than
+    the release itself.
+
+    os.replace will not rename onto a non-empty directory, so the published copy
+    is stepped aside first. The order matters: if the move fails, the old one is
+    put back, and the app keeps drawing what it was drawing.
     """
     prev = live + ".prev"
     if os.path.exists(prev):
@@ -85,6 +111,7 @@ def main(input_dir=None, keep_staging=False):
     t0 = time.time()
     root = C.OUTPUT_DIR
     staging_root = os.path.join(root, C.STAGING_DIR)
+    sweep_prev(root)
 
     rule("Step 2 — forecasts onto the grid")
     release = step2_intersect.main(input_dir, staging=True)
@@ -96,15 +123,15 @@ def main(input_dir=None, keep_staging=False):
     rule("Step 4 — impact and districts")
     step4_summary.main(staged)
 
-    rule("Step 5 — style tables")
-    step5_rules.main(staged)
-
-    rule("Step 6 — split into forecast days")
-    step6_days.main(staged)
-
-    rule(f"Publishing {release}")
-    live = promote(staged, os.path.join(root, release))
+    rule(f"Step 5 — publishing {release}")
+    staged_out = step5_publish.main(staged, release)
+    live = promote(staged_out, C.processed_dir(release))
     C.write_release_pointer(release)
+    # Only now, with the release published: until this point the raw files are
+    # the input a rerun would need.
+    for name, size in C.prune_raw(release):
+        print(f"  pruned raw_downloads/{name}  {size / 1e9:.2f} GB "
+              f"(re-fetchable; see config.RAW_KEEP)")
     # Rebuilt after the pointer, from whatever is on disk — so a rerun of an old
     # day, or a pruned folder, is reflected rather than drifting.
     idx = MAN.write_index(root, current=release)

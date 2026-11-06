@@ -55,9 +55,26 @@ def write(release_dir, data):
 
 
 def read(release_dir):
+    """The run record for a release folder, staged or published.
+
+    Two places, because the record lives in two shapes at two moments. During a
+    run it is its own file in the staging folder, written and appended to step by
+    step. Once published it is the `run` key inside processed/release.json, which
+    is where it was always going to end up -- four files that were only ever read
+    together became one, and this is the reader catching up with that.
+
+    Staging is tried first: a run in progress must see what it just wrote, not a
+    previous day's published copy sitting one directory away.
+    """
     try:
         with open(path_for(release_dir), encoding="utf-8") as f:
             return json.load(f)
+    except (OSError, ValueError):
+        pass
+    try:
+        with open(os.path.join(release_dir, "processed", C.PROCESSED["release"]),
+                  encoding="utf-8") as f:
+            return json.load(f).get("run") or None
     except (OSError, ValueError):
         return None
 
@@ -84,14 +101,12 @@ def recent(output_dir=None, limit=None, exclude=None):
     limit = limit or C.MANIFEST_BASELINE_N
     if not os.path.isdir(root):
         return []
-    names = sorted((n for n in os.listdir(root)
-                    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", n)
-                    and os.path.isdir(os.path.join(root, n))), reverse=True)
+    names = sorted(C.list_releases(root), reverse=True)
     out = []
     for n in names:
         if exclude and n == exclude:
             continue
-        m = read(os.path.join(root, n))
+        m = read(C.release_dir(n, root))
         if m:
             out.append(m)
         if len(out) >= limit:
@@ -124,9 +139,7 @@ def all_releases(output_dir=None):
     root = output_dir or C.OUTPUT_DIR
     if not os.path.isdir(root):
         return []
-    return sorted(n for n in os.listdir(root)
-                  if re.fullmatch(r"\d{4}-\d{2}-\d{2}", n)
-                  and os.path.isdir(os.path.join(root, n)))
+    return C.list_releases(root)
 
 
 def _row(release, root):
@@ -136,7 +149,7 @@ def _row(release, root):
     row a day, so it carries counts and statuses rather than anything a release
     folder can answer for itself.
     """
-    data = read(os.path.join(root, release)) or {}
+    data = read(C.release_dir(release, root)) or {}
     models = data.get("models") or {}
     steps = data.get("steps") or {}
     row = {

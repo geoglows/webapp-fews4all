@@ -10,7 +10,7 @@
 // One forecast release's delivered tables. The path is the dev-server one — Vite
 // serves the project root, so backend/output resolves while `npm run dev` is
 // running. Production needs these served from somewhere real.
-export const OUTPUT_BASE = "/backend/output/";
+export const OUTPUT_BASE = "/fews4all_data/";
 
 // Which release to draw is NOT hardcoded any more. Step 2 writes the folder name
 // into current_release.txt when a run finishes, so the app follows the pipeline
@@ -30,7 +30,17 @@ export const FALLBACK_RELEASE = "2026-09-23";
 // one release the pointer names.
 export const RELEASE_INDEX_URL = OUTPUT_BASE + "releases.json";
 
-export const releaseBase = (name) => OUTPUT_BASE + name + "/";
+/* `2026-11-05` -> `<base>2026/11/05/processed/`.
+ *
+ * The date is the path. The tree is laid out to be copied to a bucket as-is, and
+ * a bucket is a flat namespace pretending to be a tree — YYYY/MM/DD sorts and
+ * lists cleanly where a thousand sibling folders do not. Changing OUTPUT_BASE to
+ * that bucket's URL is still the only edit needed to serve from it. */
+export const releaseBase = (name) => {
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(name || ""));
+  return m ? `${OUTPUT_BASE}${m[1]}/${m[2]}/${m[3]}/processed/`
+           : OUTPUT_BASE + name + "/";
+};
 
 export async function loadReleaseIndex() {
   try {
@@ -57,7 +67,7 @@ export async function resolveRelease() {
     // No pointer served, or offline. The fallback is a usable answer; a failed
     // fetch here must not be the reason the map stays blank.
   }
-  return {release, base: OUTPUT_BASE + release + "/"};
+  return {release, base: releaseBase(release)};
 }
 
 // Nothing is fetched from public/ any more. The flash polygons used to be a

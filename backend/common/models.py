@@ -21,6 +21,7 @@ Adding a fourth model means writing one function here and one entry in READERS.
 
 import csv
 import glob
+import json
 import os
 import sys
 from collections import Counter
@@ -58,6 +59,24 @@ def blank_record():
     """Every column the contract promises, all empty. Readers fill what they have,
     so a reader can never emit a record that is missing a column downstream expects."""
     return {k: "" for k in C.FORECAST_COLUMNS}
+
+
+def _flood_hub_rows(path):
+    """The gauge records, from JSON or from the CSV that preceded it.
+
+    Same flat, dotted keys either way -- `gaugeLocation.latitude` and the rest --
+    because both are written from the same pandas.json_normalize frame. Only the
+    container changed, so this is the only function that needs to know which one
+    it is looking at.
+    """
+    if path.lower().endswith(".json"):
+        with open(path, encoding="utf-8") as f:
+            data = json.load(f)
+        rows = data.get("gauges") if isinstance(data, dict) else data
+        return [{k: ("" if v is None else v) for k, v in r.items()}
+                for r in (rows or [])]
+    with open(path, newline="", encoding="utf-8-sig") as f:
+        return list(csv.DictReader(f))
 
 
 def _date_of(stamp):
@@ -180,11 +199,16 @@ def find_input(model, input_dir=None):
     # looking nothing like the absolute INPUT_DIR, so the fallback silently never
     # fired and a hand-placed model read as missing.
     root = input_dir or C.current_input()
-    places = [root]
+    # The model's own folder under raw_downloads first -- that is where step 1
+    # puts things now. The bare folder after it, so a file dropped in by hand
+    # still works and so a release archived before the folders existed still
+    # reads. Neither path is allowed to wander into another day.
+    places = [C.raw_dir_under(root, model), root]
     here = os.path.abspath(root)
     base = os.path.abspath(C.INPUT_DIR)
     if here != base and os.path.dirname(here) == base:
         places.append(C.INPUT_DIR)
+    places = [p for p in places if p and os.path.isdir(p)]
 
     for place in places:
         hits = []
@@ -544,30 +568,29 @@ def read_flood_hub(path):
     no reach id to fall back on the way GEOGLOWS has.
     """
     out = []
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        for row in csv.DictReader(f):
-            sev = C.FLOOD_HUB_SEVERITY.get(_s(row.get("severity")).upper())
-            if sev is None:
-                continue
-            lat, lon = _f(row.get("gaugeLocation.latitude")), _f(row.get("gaugeLocation.longitude"))
-            if lat is None or lon is None:
-                continue
-            r = blank_record()
-            r.update({
-                "model": "flood_hub", "severity": sev,
-                "native_id": _s(row.get("gaugeId")),
-                "return_period_yr": _s(row.get("returnPeriodYr")),
-                # `discharge` was the column name before the world_flood_status
-                # export; both are read so an older release still loads.
-                "flow_cms": _s(row.get("dischargePeak_m3s") or row.get("discharge")),
-                "issued_time": _s(row.get("issuedTime")),
-                "start_time": _s(row.get("forecastTimeRange.start")),
-                "peak_time": _s(row.get("peakTime")),
-                "end_time": _s(row.get("forecastTimeRange.end")),
-                "country": _s(row.get("queriedCountryName")),
-                "lat": lat, "lon": lon,
-            })
-            out.append(r)
+    for row in _flood_hub_rows(path):
+        sev = C.FLOOD_HUB_SEVERITY.get(_s(row.get("severity")).upper())
+        if sev is None:
+            continue
+        lat, lon = _f(row.get("gaugeLocation.latitude")), _f(row.get("gaugeLocation.longitude"))
+        if lat is None or lon is None:
+            continue
+        r = blank_record()
+        r.update({
+            "model": "flood_hub", "severity": sev,
+            "native_id": _s(row.get("gaugeId")),
+            "return_period_yr": _s(row.get("returnPeriodYr")),
+            # `discharge` was the column name before the world_flood_status
+            # export; both are read so an older release still loads.
+            "flow_cms": _s(row.get("dischargePeak_m3s") or row.get("discharge")),
+            "issued_time": _s(row.get("issuedTime")),
+            "start_time": _s(row.get("forecastTimeRange.start")),
+            "peak_time": _s(row.get("peakTime")),
+            "end_time": _s(row.get("forecastTimeRange.end")),
+            "country": _s(row.get("queriedCountryName")),
+            "lat": lat, "lon": lon,
+        })
+        out.append(r)
     return out
 
 

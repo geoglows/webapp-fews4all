@@ -23,19 +23,19 @@ Two ways a forecast reaches the grid, because the models publish two shapes:
             so the forecast table stays one shape across every model.
 
 INPUTS
-    backend/input/                          the release's native model files,
+    <release>/raw_downloads/<model>/        the release's native model files,
                                             matched by pattern (see INPUT_GLOBS)
     Files/h3_streams_global_r6.csv          reach -> res-6 cell crosswalk
 
 OUTPUTS   (<release> is derived from the data; see derive_release)
-    backend/output/<release>/forecasts.csv        one row per flagged forecast,
+    <staged>/forecasts.csv        one row per flagged forecast,
                                                   keyed by forecast_uid, every
                                                   model — gridded or not
-    backend/output/<release>/cell_forecasts.csv   one row per (res, cell,
+    <staged>/cell_forecasts.csv   one row per (res, cell,
                                                   forecast) — written here at the
                                                   base resolution only, expanded
                                                   in place by step 3
-    backend/output/<release>/flash_areas.geojson  the ungridded footprints,
+    <staged>/flash_areas.geojson  the ungridded footprints,
                                                   carrying forecast_uid
 
 The tables are normalised rather than flat: a reach crossing forty cells would
@@ -48,6 +48,7 @@ PMTiles archive the static tier builds, so nothing here has to draw a hexagon.
 
 import csv
 import os
+import re
 import sys
 import time
 
@@ -57,6 +58,7 @@ from common import streams as S          # noqa: E402
 from common import hydrorivers as HR    # noqa: E402
 from common import models as M          # noqa: E402
 from common import manifest as MAN      # noqa: E402
+from common import tables as T
 from common.tables import write_csv, write_text   # noqa: E402
 
 
@@ -336,36 +338,36 @@ def match_lines(records, crosswalk_path):
         return [], (0, 0)
 
     pairs, seen, rows, dupes = [], set(), 0, 0
-    with open(crosswalk_path, newline="", encoding="utf-8-sig") as f:
-        rd = csv.reader(f)
-        header = next(rd, None)
-        if not header:
-            sys.exit(f"{os.path.basename(crosswalk_path)} is empty.")
-        cols = {c.strip(): i for i, c in enumerate(header)}
-        for key in ("h3_id", C.CROSSWALK_ID_COL):
-            if key not in cols:
-                sys.exit(f"{os.path.basename(crosswalk_path)} has no '{key}' column "
-                         f"(found: {list(cols)}).")
-        i_cell, i_id = cols["h3_id"], cols[C.CROSSWALK_ID_COL]
-
-        for row in rd:
-            rows += 1
-            try:
-                # Ids are written as floats in places; normalise before matching.
-                reach = str(int(float(row[i_id])))
-            except (ValueError, IndexError):
-                continue
-            uid = by_reach.get(reach)
-            if uid is None:
-                continue
-            cell = row[i_cell].strip()
-            if not cell:
-                continue
-            if (cell, uid) in seen:
-                dupes += 1
-                continue
-            seen.add((cell, uid))
-            pairs.append((cell, uid))
+    # Two columns out of 12.5 million rows. Read column-wise rather than row by
+    # row: the old reader built a list per row and threw almost all of them away,
+    # because only the handful of reaches that flagged today can match.
+    # Only the reaches that flagged today can match, so they are the filter --
+    # the other 12.4 million rows never become Python objects at all.
+    col = T.columns_where(crosswalk_path, ["h3_id"], C.CROSSWALK_ID_COL,
+                          [int(r) for r in by_reach if str(r).lstrip("-").isdigit()])
+    for key in ("h3_id", C.CROSSWALK_ID_COL):
+        if key not in col:
+            sys.exit(f"{os.path.basename(crosswalk_path)} has no '{key}' column "
+                     f"(found: {list(col)}).")
+    cells_, ids_ = col["h3_id"], col[C.CROSSWALK_ID_COL]
+    rows = len(ids_)
+    for i, raw in enumerate(ids_):
+        try:
+            # Ids are written as floats in places; normalise before matching.
+            reach = str(int(float(raw)))
+        except (ValueError, TypeError):
+            continue
+        uid = by_reach.get(reach)
+        if uid is None:
+            continue
+        cell = (cells_[i] or "").strip()
+        if not cell:
+            continue
+        if (cell, uid) in seen:
+            dupes += 1
+            continue
+        seen.add((cell, uid))
+        pairs.append((cell, uid))
 
     pairs, resolved = resolve_reaches(pairs, by_reach)
     return pairs, (rows, dupes, resolved)
@@ -426,8 +428,17 @@ def derive_release(input_dir, records):
     rows, able to name the release from a stale file and quietly pull a second
     day's forecasts in with it.
     """
+    # The date is three path segments now, not a folder name: `.../2026/11/05`
+    # read as a basename is "05", which is not a date, and every downstream rule
+    # that parses the release as one then fails quietly -- Flood Hub windows stop
+    # resolving and every gauge falls back to spanning the horizon. Ask the path
+    # layer rather than the string.
+    dated = C.release_of_path(input_dir)
+    if dated:
+        return dated
     base = os.path.basename(os.path.normpath(input_dir))
-    return base if base not in ("input", "") else None
+    return base if base not in ("input", "") and re.fullmatch(
+        r"\d{4}-\d{2}-\d{2}", base) else None
 
 
 def main(input_dir=None, output_dir=None, release=None, staging=False):
@@ -469,8 +480,11 @@ def main(input_dir=None, output_dir=None, release=None, staging=False):
                  "empty release over the last good one.")
 
     root = output_dir or C.OUTPUT_DIR
+    # Staging is a flat scratch folder by release name; the published location is
+    # the dated tree. Running this step on its own used to write <root>/2026-11-05
+    # beside the YYYY/ folders, which is a release nothing would ever find.
     out_dir = (os.path.join(root, C.STAGING_DIR, release) if staging
-               else os.path.join(root, release))
+               else C.release_dir(release, root))
     print(f"\nRelease: {release}" + ("   (staged)" if staging else ""))
 
     print(f"\nIntersecting with the res-{C.BASE_RES} grid:")
@@ -505,11 +519,11 @@ def main(input_dir=None, output_dir=None, release=None, staging=False):
                   f"({fs.get('claimed_reaches', 0):,} reach(es) claimed)")
 
     line_records = [r for m in by_model.values() if m["kind"] == "line" for r in m["records"]]
-    if line_records and not os.path.exists(C.CROSSWALK_CSV):
+    if line_records and not os.path.exists(C.CROSSWALK_TABLE):
         # Not fatal: the point models and the gauge fill have already produced
         # their cells, and a map missing one model beats no map at all. The line
         # models are recorded as dropped so the manifest says why they vanished.
-        print(f"  note: no crosswalk at {C.CROSSWALK_CSV}; GEOGLOWS reaches "
+        print(f"  note: no crosswalk at {C.CROSSWALK_TABLE}; GEOGLOWS reaches "
               f"left ungridded", file=sys.stderr)
         for m, row in status.items():
             if row.get("kind") == "line" and row["status"] in (C.MODEL_OK, C.MODEL_THIN):
@@ -519,11 +533,11 @@ def main(input_dir=None, output_dir=None, release=None, staging=False):
 
     if line_records:
         t0 = time.time()
-        lns, (rows, dupes, resolved) = match_lines(line_records, C.CROSSWALK_CSV)
+        lns, (rows, dupes, resolved) = match_lines(line_records, C.CROSSWALK_TABLE)
         pairs.extend(lns)
         print(f"  lines      {len(lns):>6,} cell/forecast pair(s) from "
               f"{len(line_records):,} reach(es)  {time.time() - t0:.1f}s")
-        print(f"             crosswalk: {rows:,} row(s) read, "
+        print(f"             crosswalk: {rows:,} row(s) matched, "
               f"{dupes:,} repeat crossing(s) collapsed")
         if resolved:
             total = sum(resolved.values())

@@ -223,7 +223,7 @@ def fetch_all(plan, dest_dir, cycle):
 
 # ---- Flood Hub --------------------------------------------------------------
 
-def fetch_flood_hub(dest, record, refresh=False):
+def fetch_flood_hub(dest, record, release, refresh=False):
     """The two Flood Hub products, each recorded on its own.
 
     Separate entries because they are separate models downstream: a flash polygon
@@ -249,8 +249,8 @@ def fetch_flood_hub(dest, record, refresh=False):
         statuses, failed, checkpoints = FH.sweep_gauges(key, dest, names, codes)
         rate = len(failed) / max(1, len(codes))
         enrich, stats = FH.enrich_warned(statuses, key, refresh_models=refresh)
-        n = FH.write_gauge_csv(statuses, enrich, stats.get("units") or {},
-                               os.path.join(dest, "world_flood_status.csv"))
+        n = FH.write_gauges(statuses, enrich, stats.get("units") or {},
+                            os.path.join(dest, f"world_flood_status_{release}.json"))
         row.update({"status": C.MODEL_OK, "gauges": n,
                     "regions_queried": len(codes), "regions_failed": len(failed),
                     "warned": stats.get("warned", 0),
@@ -297,7 +297,7 @@ def fetch_flood_hub(dest, record, refresh=False):
                for pid in [ev.get(field)] if isinstance(pid, str) and pid}
         geoms, fetched, bad = FH.polygon_geometries(ids, key, refresh=refresh)
         n = FH.write_flash_geojson(events, geoms, names,
-                                   os.path.join(dest, "urban_flash_floods.geojson"))
+                                   os.path.join(dest, f"urban_flash_floods_{release}.geojson"))
         row.update({"status": C.MODEL_OK, "events": len(events), "polygons": n,
                     "polygons_fetched": fetched,
                     "polygons_cached": max(0, len(ids) - fetched)})
@@ -380,7 +380,10 @@ def main(cycle=None, product=None, dry_run=False, input_root=None,
         sys.exit("The bucket lists no cycle folders.")
 
     release = release_of(cycle)
-    dest = os.path.join(root, release)
+    # One folder per model under raw_downloads, so a day's archive says which
+    # feed each file came from without anyone having to recognise a filename.
+    # fetch.json sits above them: it is about the fetch, not about one model.
+    dest = C.raw_dir(release, root=root)
     print(f"Cycle:  {cycle}   ->  release {release}")
     print(f"Into:   {dest}\n")
 
@@ -399,7 +402,7 @@ def main(cycle=None, product=None, dry_run=False, input_root=None,
             print(f"\nDry run — nothing written.  {time.time() - t0:.0f}s")
             return release
 
-        done, failed = fetch_all(plan, dest, cycle)
+        done, failed = fetch_all(plan, C.raw_dir(release, "geoglows"), cycle)
         got = sum(1 for _k, s, _p in done if s == "fetched")
         skipped = sum(1 for _k, s, _p in done if s == "skipped")
         row.update({"objects": len(plan), "bytes": total,
@@ -422,10 +425,11 @@ def main(cycle=None, product=None, dry_run=False, input_root=None,
         print(f"  geoglows   FAILED: {e}", file=sys.stderr)
 
     if not dry_run:
-        fetch_flood_hub(dest, record, refresh=refresh)
+        fetch_flood_hub(C.raw_dir(release, "flood_hub"), record, release,
+                        refresh=refresh)
 
     if not dry_run:
-        fetch_glofas(dest, record)
+        fetch_glofas(C.raw_dir(release, "glofas"), record)
 
     os.makedirs(dest, exist_ok=True)
     tmp = os.path.join(dest, FETCH_RECORD + ".tmp")

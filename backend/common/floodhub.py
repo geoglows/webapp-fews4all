@@ -283,12 +283,19 @@ def _return_period(value, thr):
     return ""                                  # below the 2-year threshold
 
 
-def write_gauge_csv(statuses, enrich, units, path):
-    """The flattened table, with the notebook's column names preserved.
+def write_gauges(statuses, enrich, units, path):
+    """The flattened gauge table as JSON records, atomically.
 
     pandas.json_normalize is what produced names like `gaugeLocation.latitude`,
     and read_flood_hub reads those, so it is used here rather than a hand-rolled
-    flattener that would drift from the contract by one dot.
+    flattener that would drift from the contract by one dot. The keys are the
+    same whether this writes CSV or JSON; only the container changed.
+
+    JSON because this is the one model whose raw download is irreplaceable --
+    searchLatestFloodStatus answers for right now and keeps no archive, so the
+    file written here is the only copy that will ever exist. A format that keeps
+    nulls apart from empty strings, and numbers apart from strings that look like
+    numbers, is worth the few extra kilobytes on a file that has to survive.
     """
     import pandas as pd
 
@@ -306,11 +313,15 @@ def write_gauge_csv(statuses, enrich, units, path):
              if c in df.columns]
     df = df[front + [c for c in df.columns if c not in front]]
 
+    # NaN is not JSON. Going through object dtype first keeps integers looking
+    # like integers instead of being floated on the way out.
+    records = df.astype(object).where(df.notna(), None).to_dict("records")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".part"
-    df.to_csv(tmp, index=False)
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump({"gauges": records}, f, separators=(",", ":"), default=str)
     os.replace(tmp, path)
-    return len(df)
+    return len(records)
 
 
 # ---- part three: urban flash floods -----------------------------------------

@@ -113,7 +113,7 @@ def main():
     src = C.STREAMS_V2_MODEL_TABLE
     if not os.path.exists(src):
         sys.exit(f"Not found: {src}")
-    build(src, C.STREAM_ATTRS_CSV)
+    build(src, C.STREAM_ATTRS_TABLE)
 
 
 if __name__ == "__main__":

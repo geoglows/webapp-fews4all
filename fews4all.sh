@@ -143,9 +143,9 @@ if [ -n "$DRY_RUN" ]; then
 fi
 
 echo
-echo "--- steps 2-6: build the release ------------------------------"
+echo "--- steps 2-5: build the release ------------------------------"
 python "$FEWS_ROOT/backend/daily/run_daily.py" \
-  || fail "steps 2-6 (build)"
+  || fail "steps 2-5 (build)"
 
 # --- publish to S3 -------------------------------------------------
 # Not written yet. When it is, it goes here, and it must upload the release

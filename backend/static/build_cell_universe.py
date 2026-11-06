@@ -73,7 +73,8 @@ import sys
 import time
 
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
-from common import config as C      # noqa: E402
+from common import config as C
+from common import tables as T      # noqa: E402
 
 STATIC = os.path.join(C.BACKEND, "static")
 ADM0 = os.path.join(C.BOUNDARIES_DIR, "geoBoundariesCGAZ_ADM0.gpkg")
@@ -84,16 +85,26 @@ SKIP_GROUPS = {"ATA"}              # Antarctica
 
 
 def _read_ids(path, col=0):
-    out = set()
+    """The cell ids in a table's first column, as a set. Parquet or CSV.
+
+    Only one column is read, which on the crosswalks is the difference between
+    touching 69 MB and touching 449. The sources disagree on what that column is
+    called -- h3_id in most, something else in a patch file -- so it is taken by
+    POSITION, which is what every caller here means.
+    """
+    import pyarrow.parquet as pq
+    import pyarrow.csv as pacsv
+
+    path = T.table_path(path)
     if not os.path.exists(path):
-        return out
-    with open(path, newline="", encoding="utf-8-sig") as f:
-        rd = csv.reader(f)
-        next(rd, None)
-        for row in rd:
-            if len(row) > col and row[col]:
-                out.add(row[col].strip())
-    return out
+        return set()
+    if path.lower().endswith(".parquet"):
+        name = pq.read_schema(path).names[col]
+        t = pq.read_table(path, columns=[name])
+    else:
+        t = pacsv.read_csv(path)
+        t = t.select([t.column_names[col]])
+    return {str(v).strip() for v in t.column(0).to_pylist() if v is not None and str(v).strip()}
 
 
 def _write_ids(path, ids, header="h3_id"):
@@ -238,9 +249,9 @@ def main(keep_antarctica=False, skip_land=False, refresh_land=False, input_dir=N
 
     land = set() if skip_land else guarded(
         "land", land_cells, keep_antarctica, refresh_land)
-    streams = guarded("GEOGLOWS crosswalk", csv_cells, C.CROSSWALK_CSV, 0,
+    streams = guarded("GEOGLOWS crosswalk", csv_cells, C.CROSSWALK_TABLE, 0,
                       "GEOGLOWS crosswalk")
-    hydro = guarded("HydroRIVERS crosswalk", csv_cells, C.HYDRORIVERS_CROSSWALK_CSV, 0,
+    hydro = guarded("HydroRIVERS crosswalk", csv_cells, C.HYDRORIVERS_CROSSWALK_TABLE, 0,
                     "HydroRIVERS crosswalk")
     impact = guarded("impact table", csv_cells, C.CELL_IMPACT_TABLE, 0, "impact table")
     glofas = guarded("GloFAS river mask", glofas_mask_cells, input_dir or C.INPUT_DIR)

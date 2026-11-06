@@ -78,6 +78,7 @@ import re
 import sys
 
 from . import config as C
+from . import tables as T
 
 GAUGE_HYBAS = re.compile(r"^hybas[_-]?(\d+)$", re.I)
 
@@ -86,7 +87,7 @@ class Network:
     """HydroRIVERS as a graph. Loaded once per run; absent reaches answer None."""
 
     def __init__(self, path=None):
-        self.path = path or C.HYDRORIVERS_TOPOLOGY_CSV
+        self.path = path or C.HYDRORIVERS_TOPOLOGY_TABLE
         self.ids = None          # sorted hyriv_id
         self.hybas = None        # HYBAS_L12
         self.area = None         # UPLAND_SKM
@@ -107,10 +108,13 @@ class Network:
             return self
         # `next_down` is not read. The fill no longer walks downstream, and a
         # column loaded for nobody is 68 MB of int64 held for the whole run.
-        df = pd.read_csv(self.path,
-                         usecols=["hyriv_id", "hybas_l12", "upland_skm"],
-                         dtype={"hyriv_id": "int64",
-                                "hybas_l12": "int64", "upland_skm": "float32"})
+        # Parquet now, so the three columns are read without touching the rest
+        # and already carry their types -- the dtype map below was doing by hand
+        # what the file records for itself.
+        df = pd.read_parquet(T.table_path(self.path),
+                             columns=["hyriv_id", "hybas_l12", "upland_skm"])
+        df = df.astype({"hyriv_id": "int64", "hybas_l12": "int64",
+                        "upland_skm": "float32"})
         df.sort_values("hyriv_id", inplace=True)
         self.ids = df["hyriv_id"].to_numpy()
         self.hybas = df["hybas_l12"].to_numpy()
@@ -219,16 +223,14 @@ def snap_to_reach(records, net, crosswalk_path, rings=None):
         return {}
 
     best = {}
-    with open(crosswalk_path, newline="", encoding="utf-8-sig") as f:
-        rd = csv.reader(f)
-        next(rd, None)
-        for row in rd:
-            hits = ring_of.get(row[0])
+    col = T.columns_where(crosswalk_path, ["hyriv_id"], "h3_id", list(ring_of))
+    for _i, (cell, raw) in enumerate(zip(col["h3_id"], col["hyriv_id"])):
+            hits = ring_of.get(cell)
             if not hits:
                 continue
             try:
-                rid = int(float(row[1]))
-            except (ValueError, IndexError):
+                rid = int(float(raw))
+            except (ValueError, TypeError):
                 continue
             area = net.area_of(rid)
             for uid, k in hits:
@@ -273,13 +275,12 @@ def filler_cells(claims, crosswalk_path, skip=()):
     """
     skip = set(skip)
     best = {}
-    with open(crosswalk_path, newline="", encoding="utf-8-sig") as f:
-        rd = csv.reader(f)
-        next(rd, None)
-        for row in rd:
+    col = T.columns_where(crosswalk_path, ["h3_id"], "hyriv_id",
+                          [int(r) for r in claims])
+    for row in zip(col["h3_id"], col["hyriv_id"]):
             try:
                 rid = int(float(row[1]))
-            except (ValueError, IndexError):
+            except (ValueError, TypeError):
                 continue
             claim = claims.get(rid)
             if claim is None:
@@ -305,7 +306,7 @@ def fill(records, gauge_cells, net=None, crosswalk_path=None, verbose=True):
     leave the gauges exactly as they were, never drop them.
     """
     net = (net or Network()).load()
-    crosswalk_path = crosswalk_path or C.HYDRORIVERS_CROSSWALK_CSV
+    crosswalk_path = crosswalk_path or C.HYDRORIVERS_CROSSWALK_TABLE
     blank = ([], [], {})
     if not net.ready:
         if verbose:
