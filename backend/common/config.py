@@ -166,7 +166,13 @@ def list_releases(root=None):
             for d in os.listdir(os.path.join(root, y, m)):
                 if not re.fullmatch(r"\d{2}", d):
                     continue
-                if os.path.isdir(os.path.join(root, y, m, d, "processed")):
+                # The folder is not the release. An interrupted copy leaves an
+                # empty processed/ behind, and a day indexed on the folder alone
+                # points the map at a release that has nothing in it. The
+                # manifest is written last, so its presence is what makes a day
+                # real.
+                if os.path.isfile(os.path.join(root, y, m, d, "processed",
+                                               PROCESSED["release"])):
                     out.append(f"{y}-{m}-{d}")
     return sorted(out)
 
