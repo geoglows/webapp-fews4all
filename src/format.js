@@ -115,8 +115,24 @@ export function fmtValue(key, val) {
   // unit, and — the loud one — every timestamp as its raw ISO string, so a Flood
   // Hub tile read "2026-09-23T20:56:55.602387Z". Same bug as the `fc.riverId` link
   // that deep-linked every Flood Hub tile to a bare coordinate.
-  if (key === "return_period_yr") return val + "-year";
-  if (key === "flow_cms") return val + " m³/s";
+  // "2.0-year" is how Flood Hub states it and "5-year" is how the other two do.
+  // Coercing through Number drops the trailing zero without touching a genuine
+  // fractional period — GloFAS's 1.5-year band stays "1.5-year".
+  if (key === "return_period_yr") {
+    const n = Number(val);
+    return (isFinite(n) ? n : val) + "-year";
+  }
+  // The GEOGLOWS tables carry flow as float32, so 310.1 comes back out of the
+  // parquet as 310.1000061035156. One decimal is past the precision the models
+  // actually have; a whole number keeps no decimal at all.
+  if (key === "flow_cms") {
+    const n = Number(val);
+    if (!isFinite(n)) return String(val);
+    // A small headwater reach can warn on a flow under 0.1, and rounding that
+    // to a flat "0" reads as no water at all on a flood warning.
+    if (n > 0 && n < 0.05) return "<0.1 m³/s";
+    return n.toFixed(1).replace(/\.0$/, "") + " m³/s";
+  }
   if (key.endsWith("_time")) {
     // A bare YYYY-MM-DD is a forecast DAY, not an instant — GloFAS counts its
     // horizon in whole days. `new Date("2026-10-01")` is parsed as UTC midnight,

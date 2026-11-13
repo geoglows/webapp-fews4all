@@ -1,0 +1,51 @@
+---
+title: What each model means by a forecast day
+---
+%% FEWS4All - the forecast timeline, as a 16-column day grid.
+%% A SOLID block names the days it covers, so it earns those days a place on the
+%% timeline. A DASHED block covers days without naming any: it is drawn on each
+%% of them, but cannot by itself make a day worth stepping to.
+%% Colour separates the models here only. On the map they share a palette and
+%% are told apart by the side panel.
+%% Edit the :N span after a block to move it; the spans in each row total 16.
+%% Render:  mmdc -i forecast-timeline.mmd -o forecast-timeline.svg -b white
+%% Without mmdc:  npx -y @mermaid-js/mermaid-cli -i forecast-timeline.mmd -o forecast-timeline.svg -b white
+%% NOTE one Mermaid quirk: a bare "%%" line is a parse error in block diagrams.
+%% Every comment line here must carry text after the percent signs.
+block-beta
+  columns 16
+
+  d0["0"] d1["1"] d2["2"] d3["3"] d4["4"] d5["5"] d6["6"] d7["7"]
+  d8["8"] d9["9"] d10["10"] d11["11"] d12["12"] d13["13"] d14["14"] d15["15"]
+
+  geo["GEOGLOWS - one 06:00 UTC step per day, days 0-9"]:10
+  geox["nothing past day 9"]:6
+
+  gf1["GloFAS 1-3<br/>published as 0-3"]:4
+  gf2["GloFAS 4-10"]:7
+  gf3["GloFAS 11-15"]:5
+
+  space:5
+  fhw["Flood Hub<br/>window"]:2
+  space:9
+
+  fhspan["Flood Hub gauge with no published window - covers every day, names none"]:16
+
+  flash["Flash<br/>24 h"]:2
+  flashx["flash floods never reach beyond tomorrow"]:14
+
+  classDef axis fill:#F8FAFC,stroke:#CBD5E1,color:#475569
+  classDef geoc fill:#E0F2FE,stroke:#0284C7,color:#0C4A6E
+  classDef gloc fill:#CCFBF1,stroke:#0F766E,color:#134E4A
+  classDef fhc fill:#EDE9FE,stroke:#7C3AED,color:#4C1D95
+  classDef flsc fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D
+  classDef ghost fill:#FFFFFF,stroke:#CBD5E1,color:#64748B,stroke-dasharray:3 3
+  classDef span fill:#FAF8FF,stroke:#7C3AED,color:#4C1D95,stroke-dasharray:5 4
+
+  class d0,d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15 axis
+  class geo geoc
+  class gf1,gf2,gf3 gloc
+  class fhw fhc
+  class flash flsc
+  class geox,flashx ghost
+  class fhspan span

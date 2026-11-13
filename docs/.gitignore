@@ -18,6 +18,11 @@
 *.xdv
 *.synctex.gz
 *.pdf
+# ...except a rendered figure, which is a build INPUT: content.tex includes it
+# with \includegraphics, so a clone without it cannot compile the manual. It is
+# generated from the .mmd beside it, not hand-drawn, but regenerating needs
+# mermaid-cli and that is not on every machine.
+!user-manual/figures/*.pdf
 # latexmk's $out_dir — everything in it is regenerated, including anything a
 # preview step renders there.
 build/

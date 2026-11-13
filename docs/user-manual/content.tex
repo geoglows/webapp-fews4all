@@ -48,7 +48,14 @@ GloFAS & Copernicus Emergency Management Service (European Commission) & Global 
 Flood Hub & Google & AI gauge forecasts on published severity tiers, each gauge spread onto the river reach it stands on. Also supplies the flash-flood polygons. \\
 \end{longtable}
 
-GEOGLOWS forecasts are currently withheld over one region --- see \S3.5, \emph{A known gap: withheld GEOGLOWS forecasts}, for what is removed and why.
+GEOGLOWS over-reports flooding over one region, and those forecasts are drawn rather than hidden --- see \S3.5, \emph{A known gap: inflated GEOGLOWS return periods}, for what the artifact is and why it is left visible.
+
+What that means in practice is uneven. Table~\ref{tab:model-coverage} measures it on the delivered releases: GloFAS issues the overwhelming majority of river alerts, GEOGLOWS roughly a tenth of them, and Flood Hub a fraction of a percent, since it can only speak where a gauge stands.
+The severity mix differs in kind as well as in volume --- Flood Hub places close to half its alerts at danger, against well under a fifth for the other two, and has yet to issue an extreme one.
+The figures are ranges rather than averages because the spread is the point: a measure that barely moves across a week is a property of the system, while Flood Hub\textquotesingle s wide bands are a handful of alerts a day moving one at a time.
+Regenerate the table with \texttt{docs/user-manual/tables/model\_coverage.py}, which re-derives it from whatever releases are on disk.
+
+\input{tables/model-coverage}
 
 \subsection{Boundaries, Context, and Exposure Data}\label{boundaries-context-and-exposure-data}
 
@@ -302,7 +309,7 @@ Flood Hub publishes a window per gauge, usually one or two days wide, somewhere 
 Flash floods cover the next 24 hours.
 That window crosses midnight more often than not --- a warning issued at six in the evening runs to six tomorrow evening --- so they are drawn on today and tomorrow, and never further.
 
-\input{figures/forecast-timeline}
+\input{figures/forecast-timeline-mermaid}
 
 A day earns a place on the bar only if some forecast \emph{names} it.
 That is the distinction the figure draws as solid against dashed: a GEOGLOWS step names its day, a GloFAS band names the days in its range, a Flood Hub window names the days it covers --- while a GloFAS pixel with no band, or a gauge that published no window, is drawn on every day without naming any of them.
@@ -428,9 +435,9 @@ Every model is mapped to the same three rungs, but each crosses its threshold in
 
 Return periods are each model\textquotesingle s own: they come from that model\textquotesingle s simulated climatology, not from gauge records, so ``20-year'' means 20-year in that model\textquotesingle s history of itself.
 
-\subsection{A known gap: withheld GEOGLOWS forecasts}\label{withheld-geoglows}
+\subsection{A known gap: inflated GEOGLOWS return periods}\label{withheld-geoglows}
 
-\notebox{\textbf{GEOGLOWS forecasts are currently withheld over Finland and Russian Karelia, and real flooding there will not be reported by that model.} The other three models report over the region normally.}
+\notebox{\textbf{GEOGLOWS reports flooding across Finland and Russian Karelia almost every day, and most of it is an artifact of the model\textquotesingle s return periods rather than a flood.} Treat GEOGLOWS warnings in that region as unreliable until the climatology is rebuilt. The other three models report over the region normally.}
 
 That return period is where the problem starts.
 Because it is drawn from the model\textquotesingle s own simulated history, it depends on the retrospective record and the forecast climatology meeting cleanly --- and in some regions they do not.
@@ -440,13 +447,16 @@ Finland and Russian Karelia are the clearest instance found so far.
 Across the ten releases held when this was written --- 23 September to 29 October 2026, thirty-six days apart end to end --- 1,379 reaches in that region were flagged on \emph{every single one}, and three quarters of them reported the same severity every day.
 Floods end; these did not.
 
-Until the climatology is corrected, every GEOGLOWS forecast between 17°E and 45°E and between 57°N and 71°N is removed from the release before anything else sees it.
-It is not drawn, not counted toward agreement, and not listed in the panel.
-That removes roughly half of GEOGLOWS\textquotesingle s global output, which is less a measure of the blackout than of the defect behind it: one region the size of Finland was producing half of every GEOGLOWS flood warning on earth.
+For a time these forecasts were suppressed: everything between 17°E and 45°E and between 57°N and 71°N was removed from the release before anything else saw it --- not drawn, not counted toward agreement, not listed in the panel.
+That rectangle was swallowing roughly \emph{half} of GEOGLOWS\textquotesingle s global output, which is less a measure of the blackout than of the defect behind it: one region the size of Finland was producing half of every GEOGLOWS flood warning on earth.
 
-This is a stopgap and not a correction.
-It hides real forecasts along with the inflated ones, it is a blunt rectangle rather than a judgement about any particular river, and it should be removed as soon as the underlying climatology is rebuilt.
-The region to suppress is set in one place in the pipeline configuration, every run records how many forecasts it withheld, and the run log says so on every single run so that the state cannot quietly become permanent.
+\textbf{The suppression has since been lifted, deliberately.}
+A defect that is hidden is a defect nobody fixes, and the scale of this one is far easier to show than to describe --- a map of the region lit amber every day, in every release, is the argument.
+Leaving it visible also keeps the manual honest: the application no longer removes real forecasts along with the inflated ones, and no blunt rectangle stands in for a judgement about any particular river.
+
+The cost is that the region is wrong on the map rather than absent from it, and that GEOGLOWS\textquotesingle s share of the global totals in Table~\ref{tab:model-coverage} roughly doubles once those forecasts are counted.
+Both are the point.
+The suppression remains implemented, as a single extent in the pipeline configuration that is currently switched off; restoring it is a one-line change, and whenever it is on, every run records how many forecasts it withheld and the run log says so on every single run, so the state cannot quietly become permanent.
 
 \subsection{How agreement is decided}\label{how-agreement-is-decided}
 

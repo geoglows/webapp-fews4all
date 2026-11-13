@@ -972,11 +972,19 @@ FLOOD_HUB_FILL_PREFIX = "from "
 #   - Until then it says so where it cannot be missed: the run log prints a line
 #     every single run, and run.json records the count.
 #
+# CURRENT STATE: OFF. Nothing is being withheld. Everything below describes the
+# defect and the box that was built for it, which is kept because the defect is
+# not fixed -- only the hiding of it has stopped.
+#
 # The box is west, south, east, north in degrees -- the extent of the screenshot
 # the artifact was reported from, which is Finland plus Russian Karelia and their
 # margins. Set it to None to switch the blackout off entirely.
 # ============================================================================
-GEOGLOWS_BLACKOUT_BOX = (17.0, 57.0, 45.0, 71.0)
+# TURNED OFF 2026-11-13, deliberately, to put the artifact back on the map:
+# the defect is being raised with the GEOGLOWS team and a screenshot of the
+# region lit amber every day is the clearest statement of it. The box below is
+# the extent that was being blacked out; restore it by dropping the `None`.
+GEOGLOWS_BLACKOUT_BOX = None       # was (17.0, 57.0, 45.0, 71.0)
 # A record of what was being flagged in there when the box went in, written by
 # static/build_suppression.py. NOTHING IN THE DAILY RUN READS THIS -- the box is
 # the rule. It exists so "what are we hiding?" has an answer that does not depend

@@ -549,8 +549,7 @@ export function renderPanel(props) {
     ? notice("info",
         `${beyond.map(modelLabel).join(" and ")} ${beyond.length > 1 ? "do" : "does"} ` +
         `not forecast this far`,
-        `Day ${today.day} is past ${beyond.length > 1 ? "their" : "its"} horizon, so ` +
-        `${beyond.length > 1 ? "they are" : "it is"} not on the map. ` +
+        `Day ${today.day} is past ${beyond.length > 1 ? "their" : "its"} horizon. ` +
         `Step back toward today to see ${beyond.length > 1 ? "them" : "it"}.`)
     : "";
 
@@ -620,8 +619,7 @@ export function renderPanel(props) {
     && Number.isFinite(flashReach) && today.day > flashReach;
   const flashDroppedHtml = flashBeyond
     ? notice("info", "Flash floods do not forecast this far",
-        `They cover 24 hours from when they are issued, so they reach day ` +
-        `${flashReach} and no further. Step back toward today to see them.`)
+        `They cover 24 hours from when they are issued. Step back toward today to see them.`)
     : (visibleFlashModels.size && missing("flash"))
       ? notice("warn", "Flash floods not in this release",
           "The run could not use them on this day.")
