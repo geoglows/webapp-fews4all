@@ -85,6 +85,38 @@ def day_zero_counts(release, day):
     return out
 
 
+def concurrence(release, day):
+    """Per model: its flagged cells, and how many carry other models too.
+
+    Measured on CELLS, not alerts, because corroboration is spatial -- two
+    models agree by landing on the same ground, and a count of forecasts cannot
+    express that. Resolution 6 only: a coarse cell lists every model beneath it,
+    which would call forecasts a hundred kilometres apart an agreement.
+
+    Flash is excluded from the tally. It is a different hazard on a different
+    geometry, so a flash polygon over a flagged river cell is not two models
+    corroborating one flood.
+    """
+    path = os.path.join(C.processed_dir(release), C.PROCESSED["day"].format(day=day))
+    with open(path, encoding="utf-8") as fh:
+        table = json.load(fh)["cells"]      # the day file wraps its cell table
+    col = {name: n for n, name in enumerate(table["columns"])}
+    out = {label: {"cells": 0, 2: 0, 3: 0} for label in LABELS.values()}
+    for row in table["rows"]:
+        if row[col["res"]] != "6":
+            continue
+        here = {LABELS[m] for m in row[col["models"]].split("+") if m in LABELS}
+        if not here:
+            continue
+        for label in here:
+            out[label]["cells"] += 1
+            if len(here) >= 3:
+                out[label][3] += 1
+            elif len(here) == 2:
+                out[label][2] += 1
+    return out
+
+
 def blacked_out(releases):
     """Releases built while the GEOGLOWS blackout box was on, and what it took.
 
@@ -116,21 +148,23 @@ def caveat(hidden, releases):
             f"{sum(hidden.values()):,} forecast(s) withheld in total.")
 
 
-def reach(release):
-    """How far each model's forecasts run, as the release itself recorded it."""
-    path = os.path.join(C.processed_dir(release), C.PROCESSED["release"])
-    with open(path, encoding="utf-8") as fh:
-        manifest = json.load(fh)
-    # model_reach is the last day index, so +1 turns it into a count of days.
-    return {LABELS[m]: v + 1 for m, v in manifest.get("model_reach", {}).items()
-            if m in LABELS}
-
-
 def collect(releases, day):
     per_release = {}
     for release in releases:
         per_release[release] = day_zero_counts(release, day)
     return per_release
+
+
+def shared_percentages(releases, day):
+    """Per release, per model: the share of its cells that are corroborated."""
+    out = {}
+    for release in releases:
+        conc = concurrence(release, day)
+        out[release] = {
+            label: {2: (v[2] / v["cells"] if v["cells"] else 0.0),
+                    3: (v[3] / v["cells"] if v["cells"] else 0.0)}
+            for label, v in conc.items()}
+    return out
 
 
 def percentages(per_release):
@@ -164,21 +198,27 @@ def span(values, average=False):
     return f"{low:.1%} – {high:.1%}"
 
 
-def build_rows(pct, days_ahead, average=False):
+def build_rows(pct, shared, average=False):
     rows = []
     for label in LABELS.values():
         cells = [pct[r][label] for r in pct]
+        sh = [shared[r][label] for r in shared]
         rows.append([
             label,
             span([c["share"] for c in cells], average),
             *[span([c[s] for c in cells], average) for s in SEVERITIES],
-            str(days_ahead.get(label, "")),
+            span([x[2] for x in sh], average),
+            span([x[3] for x in sh], average),
         ])
     return rows
 
 
 HEADER = ["River model", "Share of alerts", "Warning", "Danger", "Extreme",
-          "Days ahead"]
+          "In 2-model cells", "In 3-model cells"]
+# The page is narrower than the terminal: eight columns of ranges overflow the
+# text block by about a third at full width. Only the printed table is squeezed.
+TEX_HEADER = ["River model", "Share of alerts", "Warning", "Danger", "Extreme",
+              "2-model", "3-model"]
 
 
 def print_table(rows, releases, day, average, note=None):
@@ -205,9 +245,11 @@ def write_tex(path, rows, releases, day, note=None):
 % Source: day {day} of releases {releases[0]} to {releases[-1]}.
 \\begin{{table}}[htbp]
 \\centering
-\\begin{{tabular}}{{l r r r r r}}
+\\small
+\\setlength{{\\tabcolsep}}{{3pt}}
+\\begin{{tabular}}{{l r r r r r r}}
 \\toprule
-{" & ".join(esc(h) for h in HEADER)} \\\\
+{" & ".join(esc(h) for h in TEX_HEADER)} \\\\
 \\midrule
 {body}
 \\bottomrule
@@ -219,7 +261,11 @@ def write_tex(path, rows, releases, day, note=None):
   \\emph{{Share of alerts}} is each model's portion of all river forecasts
   issued for that day, so the column adds to 100\\%. The severity columns are
   the mix \\emph{{within}} each model, so each row adds to 100\\%. Shares say
-  who issues the alerts, not who is right.{note_tex}}}
+  who issues the alerts, not who is right.
+  The last two columns change denominator: they are the share of that model's
+  own flagged \\emph{{cells}} that also carry one, or two, other models --
+  corroboration is spatial, so it is counted on cells rather than on
+  alerts.{note_tex}}}
 \\label{{tab:model-coverage}}
 \\end{{table}}
 """
@@ -266,7 +312,7 @@ def write_xlsx(path, rows, per_release, pct, releases, day, font_size):
                 horizontal="center" if i > 1 else "left", vertical="center")
             if n % 2:
                 cell.fill = band
-    for col, width in zip("ABCDEF", [26, 26, 26, 26, 26, 17]):
+    for col, width in zip("ABCDEFG", [26, 24, 22, 22, 22, 24, 24]):
         sheet.column_dimensions[col].width = width
     for r in range(1, top + len(rows) + 1):
         sheet.row_dimensions[r].height = font_size + 17
@@ -360,7 +406,8 @@ def main(argv=None):
                  f"is past what their models reach.")
 
     pct = percentages(per_release)
-    rows = build_rows(pct, reach(releases[-1]), args.average)
+    shared = shared_percentages(releases, args.day)
+    rows = build_rows(pct, shared, args.average)
     note = caveat(blacked_out(releases), releases)
     print_table(rows, releases, args.day, args.average, note)
     if args.tex:

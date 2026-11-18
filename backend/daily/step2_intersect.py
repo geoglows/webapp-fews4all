@@ -333,7 +333,16 @@ def match_lines(records, crosswalk_path):
     list the same forecast several times over and every count built on top of it
     would be inflated.
     """
-    by_reach = {r["native_id"]: r["forecast_uid"] for r in records}
+    # One reach, MANY forecasts: GEOGLOWS publishes a row per reach per forecast
+    # day, so `{native_id: uid}` kept only whichever arrived last -- and records
+    # arrive in timestamp order, so that was the furthest-out day. A reach
+    # flooding every day of the horizon reached the map on day 9 alone and
+    # vanished from today, which cost ~90% of the day-0 forecasts and made the
+    # final tab the busiest. The value is a LIST, and every uid is mapped.
+    by_reach, day_of = {}, {}
+    for r in records:
+        by_reach.setdefault(str(r["native_id"]), []).append(r["forecast_uid"])
+        day_of[r["forecast_uid"]] = str(r.get("day_from", ""))
     if not by_reach:
         return [], (0, 0)
 
@@ -357,23 +366,24 @@ def match_lines(records, crosswalk_path):
             reach = str(int(float(raw)))
         except (ValueError, TypeError):
             continue
-        uid = by_reach.get(reach)
-        if uid is None:
+        uids = by_reach.get(reach)
+        if not uids:
             continue
         cell = (cells_[i] or "").strip()
         if not cell:
             continue
-        if (cell, uid) in seen:
-            dupes += 1
-            continue
-        seen.add((cell, uid))
-        pairs.append((cell, uid))
+        for uid in uids:
+            if (cell, uid) in seen:
+                dupes += 1
+                continue
+            seen.add((cell, uid))
+            pairs.append((cell, uid))
 
-    pairs, resolved = resolve_reaches(pairs, by_reach)
+    pairs, resolved = resolve_reaches(pairs, by_reach, day_of)
     return pairs, (rows, dupes, resolved)
 
 
-def resolve_reaches(pairs, by_reach):
+def resolve_reaches(pairs, by_reach, day_of=None):
     """Apply the river-network rules to cells holding more than one reach.
 
     A hexagon is wider than a GEOGLOWS reach, so one routinely catches several
@@ -390,17 +400,23 @@ def resolve_reaches(pairs, by_reach):
               "(build it with static/build_stream_attrs.py)", file=sys.stderr)
         return pairs, {}
 
+    # Resolution is PER DAY. The rules answer "which reach speaks for this
+    # hexagon", and two forecasts for the same reach on different days are not
+    # two reaches competing -- grouped by cell alone, the same river would be
+    # made to resolve against itself ten times over.
+    day_of = day_of or {}
     uid_of = {}
     by_cell = {}
     for cell, uid in pairs:
-        by_cell.setdefault(cell, []).append(uid)
-    for reach, uid in by_reach.items():
+        by_cell.setdefault((cell, day_of.get(uid, "")), []).append(uid)
+    for reach, uids in by_reach.items():
         rid = _reach_int(reach)
         if rid is not None:
-            uid_of[uid] = rid
+            for uid in (uids if isinstance(uids, list) else [uids]):
+                uid_of[uid] = rid
 
     out, tally = [], {}
-    for cell, uids in by_cell.items():
+    for (cell, _day), uids in by_cell.items():
         ids = [uid_of.get(u) for u in uids]
         if len(uids) < 2 or any(i is None for i in ids):
             out.extend((cell, u) for u in uids)

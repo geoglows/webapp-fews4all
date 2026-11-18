@@ -458,6 +458,15 @@ The cost is that the region is wrong on the map rather than absent from it, and 
 Both are the point.
 The suppression remains implemented, as a single extent in the pipeline configuration that is currently switched off; restoring it is a one-line change, and whenever it is on, every run records how many forecasts it withheld and the run log says so on every single run, so the state cannot quietly become permanent.
 
+The same defect is visible globally, and much more quietly.
+Table~\ref{tab:return-period-flow} pools every forecast day of the delivered releases and reads discharge against return period.
+If the climatology behind a return period is sound, a rarer event carries more water --- and for GEOGLOWS it does not: the median flow behind a 100-year forecast is 6.6\,m\textsuperscript{3}/s against 52.8 for a 2-year one, and three quarters of 100-year forecasts sit under 10\,m\textsuperscript{3}/s.
+The 100-year rung is also anomalously populated, carrying more forecasts than the 25- and 50-year rungs together.
+These are the same inflated return periods as the blackout above, thinly spread rather than concentrated in one rectangle, and because they land on the Extreme rung they are the loudest thing on the map.
+Flood Hub, whose thresholds are published rather than simulated, shows no such inversion.
+
+\input{tables/return-period-flow}
+
 \subsection{How agreement is decided}\label{how-agreement-is-decided}
 
 Agreement is settled at resolution 6. A coarse cell lists every model beneath it, which would claim agreement between forecasts a hundred kilometres apart; the delivered tables therefore carry a separate column holding only the model sets that genuinely share one base cell.

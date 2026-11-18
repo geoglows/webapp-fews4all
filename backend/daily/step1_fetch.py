@@ -35,6 +35,10 @@ WHAT IT DOES NOT DO
     python3 backend/daily/step1_fetch.py --cycle 2026102100     # a specific cycle
     python3 backend/daily/step1_fetch.py --product parquet      # override config
     python3 backend/daily/step1_fetch.py --dry-run              # plan only
+    python3 backend/daily/step1_fetch.py --cycle 2026111300 --geoglows-only
+                                        # re-fetch one past cycle's GEOGLOWS,
+                                        # leaving the archived Flood Hub and
+                                        # GloFAS files for that day alone
 """
 
 import json
@@ -363,7 +367,7 @@ def write_pointer(release, root=None):
 
 
 def main(cycle=None, product=None, dry_run=False, input_root=None,
-         refresh=False):
+         refresh=False, geoglows_only=False):
     t0 = time.time()
     product = (product or C.GEOGLOWS_PRODUCT).lower()
     root = input_root or C.INPUT_DIR
@@ -424,14 +428,33 @@ def main(cycle=None, product=None, dry_run=False, input_root=None,
         row["notes"].append(f"{type(e).__name__}: {e}")
         print(f"  geoglows   FAILED: {e}", file=sys.stderr)
 
-    if not dry_run:
+    # --geoglows-only exists for RE-fetching a past cycle. The GEOGLOWS bucket
+    # is addressed by cycle stamp, so an old cycle comes back exactly as it was;
+    # the Flood Hub and GloFAS endpoints only ever answer with TODAY, so asking
+    # them again while rebuilding 13 Nov would overwrite that day's archived
+    # snapshot with this morning's and quietly destroy the record.
+    if not dry_run and not geoglows_only:
         fetch_flood_hub(C.raw_dir(release, "flood_hub"), record, release,
                         refresh=refresh)
 
-    if not dry_run:
+    if not dry_run and not geoglows_only:
         fetch_glofas(C.raw_dir(release, "glofas"), record)
 
     os.makedirs(dest, exist_ok=True)
+    if geoglows_only:
+        # Merge rather than replace: the other models were not asked this time,
+        # and their rows in fetch.json are still the true record of how the
+        # files already on disk got there.
+        try:
+            with open(os.path.join(dest, FETCH_RECORD), encoding="utf-8") as fh:
+                prior = json.load(fh)
+            merged = dict(prior.get("models") or {})
+            merged.update(record["models"])
+            record["models"] = merged
+            record["notes"] = (prior.get("notes") or []) + [
+                f"geoglows re-fetched {record['fetched']}; other models untouched"]
+        except (OSError, ValueError):
+            pass
     tmp = os.path.join(dest, FETCH_RECORD + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(record, f, indent=2, sort_keys=True)
@@ -456,4 +479,5 @@ if __name__ == "__main__":
     main(cycle=a[a.index("--cycle") + 1] if "--cycle" in a else None,
          product=a[a.index("--product") + 1] if "--product" in a else None,
          dry_run="--dry-run" in a,
-         refresh="--refresh" in a)
+         refresh="--refresh" in a,
+         geoglows_only="--geoglows-only" in a)
