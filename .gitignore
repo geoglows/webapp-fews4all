@@ -71,5 +71,3 @@ variables.env
 .fews4all.lock
 backend/static/ref/flash_polygons.json
 backend/static/ref/flood_hub_gauge_models.json
-backend/static/ref/flash_polygons.json
-backend/static/ref/flood_hub_gauge_models.json
