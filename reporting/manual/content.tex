@@ -25,7 +25,7 @@ This user manual describes the FEWS4All application, its features, and how to us
 \subsection{Models Integrated}\label{models-integrated}
 
 FEWS4All is model-agnostic: each source is normalized to the same severity scale and drawn on the same grid.
-What differs is the geometry each publishes on, and how each decides that a threshold has been crossed.
+What differs is the geometry each model publishes on, and how each model decides that a threshold has been crossed.
 
 \begin{longtable}[]{@{}
   >{\raggedright\arraybackslash}p{(\columnwidth - 4\tabcolsep) * \real{0.1603}}
@@ -355,6 +355,8 @@ Each finds the current release itself and takes no arguments.
 
 \begin{itemize}
 \item
+  \textbf{step1\_fetch.py:} downloads the native files from each model, unpacks them, and writes a release.json with the metadata the map reads. It also writes a crosswalk.csv for GEOGLOWS and a gauge\_fill.csv for Flood Hub.
+\item
   \textbf{step2\_intersect.py:} reads each model\textquotesingle s native file and puts every flagged forecast onto the resolution-6 grid. Points bin straight into the cell containing them; GEOGLOWS reaches join through the crosswalk to every cell they cross; Flood Hub gauges are additionally spread onto the reach they stand on. Writes forecasts.csv, cell\_forecasts.csv, and flash\_areas.geojson.
 \item
   \textbf{step3\_compare.py:} decides agreement at resolution 6, then rolls the grid up through resolutions 5, 4 and 3. Writes cells.csv.
@@ -368,16 +370,47 @@ Each finds the current release itself and takes no arguments.
 
 Rebuilt only when its inputs change, which in practice is rarely.
 A change to a forecasting rule never requires it.
+Nothing here runs on a schedule: the daily run reads what these leave behind and never calls any of them.
+
+\textbf{The geometry the map draws.}
+These are the universe of cells and the hexagons for them, and they run in that order.
 
 \begin{itemize}
 \item
-  \textbf{build\_cell\_tiles.py:} the H3 geometry archive, as PMTiles, one layer per resolution. It holds the whole universe of land cells rather than the flagged ones, so a change to which cells are flagged needs no rebuild.
+  \textbf{build\_cell\_universe.py:} the canonical registry of which resolution-6 cells exist, which is the only question it answers. It is a union of every source that could flag a cell, and says nothing about which cells are flagged today or which carry exposure numbers --- those are other files\textquotesingle{} jobs. Conflating them has a silent failure mode: the tile build once took the impact table as its universe, and 36 cells flagged by GloFAS had no hexagon at all, so they could not be drawn, hovered or clicked.
 \item
-  \textbf{build\_impact\_table.py:} the per-cell exposure totals, computed once.
+  \textbf{build\_cell\_tiles.py:} the H3 geometry archive, as PMTiles, one layer per resolution. It holds the whole universe rather than the flagged cells, so a change to which cells are flagged needs no rebuild.
 \item
-  \textbf{build\_stream\_attrs.py:} river-network topology lifted out of the stream tiles, so step 2 can tell which reach speaks for a hexagon holding several.
+  \textbf{pmtiles\_merge.py:} joins the four per-resolution archives into one. Imported by the tile build rather than run on its own. It exists so the merge needs nothing installed --- \texttt{tile-join} would also do it, but only on a recent enough tippecanoe, and a missing one used to leave the build silently unmerged.
+\end{itemize}
+
+\textbf{What the daily run looks things up in.}
+Each of these answers a question the daily files do not.
+
+\begin{itemize}
 \item
-  \textbf{build\_hydrorivers.py:} the HydroRIVERS topology and its H3 crosswalk, used only by the Flood Hub gauge fill.
+  \textbf{build\_stream\_attrs.py:} river-network topology, read from the GEOGLOWS v2 model table, so step 2 can tell which reach speaks for a hexagon holding several (\S\ref{how-each-model-reaches-the-grid}). v2 because the forecasts are v2: it was once swept out of the v3 stream tiles, which carry the same three facts under different names on a different network with different ids, and the mismatch looked like nothing at all.
+\item
+  \textbf{build\_hydrorivers.py:} the HydroRIVERS v10 topology and its H3 crosswalk, used only by the Flood Hub gauge fill. HydroRIVERS rather than the GEOGLOWS network because Flood Hub is built on HydroSHEDS and its gauge ids are HydroBASINS level-12 codes, which is what makes most of the join an exact string match rather than a snap.
+\item
+  \textbf{build\_reach\_points.py:} where each GEOGLOWS v2 reach is. A reach\textquotesingle s coordinate never changes, but it used to arrive in the daily file; the map-tables in the bucket carry \texttt{comid}, \texttt{mean}, \texttt{thickness} and \texttt{ret\_per} and nothing else. Every forecast is placed by coordinate alone and GEOGLOWS publishes no country field to fall back on, so without this table no GEOGLOWS forecast would carry a district.
+\end{itemize}
+
+\textbf{Not built here.}
+\texttt{backend/static/tables/cell\_impact\_r6.parquet} --- the per-cell exposure totals step 4 joins onto cells --- is delivered as a file rather than produced by a script in this repository.
+\texttt{backend/static/ref/cell\_impact\_r6\_metadata.csv} is where each column\textquotesingle s unit and source is written down, and it is the only place they are.
+Two of them are worth knowing before reading a number off the panel: farmland is in km\textsuperscript{2} rather than m\textsuperscript{2}, and roads and railways arrive as one column and cannot be shown apart.
+
+\textbf{Run by hand, to answer a question.}
+None of these writes anything the application reads.
+
+\begin{itemize}
+\item
+  \textbf{build\_suppression.py:} a record of what the GEOGLOWS blackout box is swallowing, so that ``what are we actually hiding'' has an answer that does not depend on anyone still holding the October 2026 releases. The rule is the box in the configuration, not this list --- a forecast is withheld for where it is, not for being in a file. Run it before deciding to widen, narrow or remove the box (\S\ref{withheld-geoglows}).
+\item
+  \textbf{probe\_lead\_times.py:} asks whether forecast day N flags about as much as day 0. Every size estimate for the per-day timeline rests on that assumption, and the daily run cannot check it: it downloads a single timestep, and one step cannot be compared with itself.
+\item
+  \textbf{mvt.py:} a small reader that pulls the feature properties out of one layer of a vector tile, with no geometry. Imported rather than run, for when the question is what actually landed in a tile.
 \end{itemize}
 
 \subsection{How each model reaches the grid}\label{how-each-model-reaches-the-grid}
@@ -448,6 +481,13 @@ Every model is mapped to the same three rungs, but each crosses its threshold in
 
 Return periods are each model\textquotesingle s own: they come from that model\textquotesingle s simulated climatology, not from gauge records, so ``20-year'' means 20-year in that model\textquotesingle s history of itself.
 
+\subsection{How agreement is decided}\label{how-agreement-is-decided}
+
+Agreement is settled at resolution 6. A coarse cell lists every model beneath it, which would claim agreement between forecasts a hundred kilometres apart; the delivered tables therefore carry a separate column holding only the model sets that genuinely share one base cell.
+Agreement is counted across the models currently shown, and every model of an agreeing set has to be one of them.
+Switch GloFAS off and a cell GEOGLOWS and GloFAS agreed on stops being drawn as agreement --- it would otherwise sit on the map in the concurrence color while the panel listed a single model, which reads as a fault however carefully it is explained.
+The consequence is worth knowing: with only one model shown, no cell can clear the agreement filter at all, because agreement between two models is not something one model can demonstrate.
+
 \subsection{A known gap: inflated GEOGLOWS return periods}\label{withheld-geoglows}
 
 \notebox{\textbf{GEOGLOWS reports flooding across Finland and Russian Karelia almost every day, and most of it is an artifact of the model\textquotesingle s return periods rather than a flood.} Treat GEOGLOWS warnings in that region as unreliable until the climatology is rebuilt. The other three models report over the region normally.}
@@ -488,13 +528,6 @@ GloFAS is in the table to be counted rather than weighed: it publishes ensemble 
 That absence is worth seeing on the page --- a substantial share of the alert volume reports no magnitude, which is why severity cannot be compared across the models on anything but the rung.
 
 \input{../out/tables/return-period-flow}
-
-\subsection{How agreement is decided}\label{how-agreement-is-decided}
-
-Agreement is settled at resolution 6. A coarse cell lists every model beneath it, which would claim agreement between forecasts a hundred kilometres apart; the delivered tables therefore carry a separate column holding only the model sets that genuinely share one base cell.
-Agreement is counted across the models currently shown, and every model of an agreeing set has to be one of them.
-Switch GloFAS off and a cell GEOGLOWS and GloFAS agreed on stops being drawn as agreement --- it would otherwise sit on the map in the concurrence color while the panel listed a single model, which reads as a fault however carefully it is explained.
-The consequence is worth knowing: with only one model shown, no cell can clear the agreement filter at all, because agreement between two models is not something one model can demonstrate.
 
 \subsection{Outputs}\label{outputs}
 

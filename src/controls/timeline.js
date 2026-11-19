@@ -59,8 +59,44 @@ import {icon} from "../icons.js";
 const PLAY_MS = 900;          // one day per step; slow enough to read the map
 const PREFETCH = 2;           // days to pull ahead of the cursor during playback
 
-let frames = [];              // [{release, day, kind, meta, empty}]
-let idx = 0;                  // which frame is showing
+// TICKS ARE A WINDOW; THE SLIDER IS THE WHOLE RANGE
+//
+// Every published release used to get a tick, so the strip grew by one every
+// morning: by the end of November it was 31 past days against 16 forecast ones
+// and it ran out from under the step arrows. The forecast half is the half this
+// app is FOR, and it was being squeezed by history nobody had asked to see.
+//
+// So the ticks show as many days as the window has room for, and PAN when there
+// are more than that. Step back past the left edge and the strip slides: a day
+// appears on the left and one drops off the right. The ticks keep the sizes they
+// always had -- they are aim targets, and shrinking them to fit more in makes
+// them worse at the only job they have.
+//
+// How many fit is MEASURED, not guessed. The strip is a flex child with a fixed
+// height and overflow-hidden, so its width comes from the row and never from its
+// own contents -- which is what makes measuring it safe: adding ticks cannot
+// change the number that fit. On a laptop at full width the whole record fits
+// and nothing pans at all; dock the panel wider and it starts to.
+//
+// The slider underneath is not windowed either way. It spans every day the bar
+// knows about, so one drag can go from a release three weeks back to day 15 of
+// the forecast without letting go. That is also why its `max` never changes once
+// the bar is built, which is what lets a drag survive a repaint -- see paint().
+const TICK_PX = 6;            // the width of an ordinary tick
+// One spacing, always. The strip briefly stretched its gaps to fill a wide
+// window, which made the pitch of the axis a property of the browser window:
+// the same week of days sat 3px apart docked and 9px apart full-screen, and
+// stepping between the two redrew the bar at a different scale. A day is a day.
+// Short of filling the track the strip just centres, and the white space either
+// side is the honest statement -- there is no more record yet.
+const TICK_GAP = 3;
+const TICK_SPARE = 10;        // the active tick is 10px and today's 8, not 6
+const MIN_VISIBLE = 8;        // narrower than this, pan rather than vanish
+let visible = 23;             // ticks on the strip at once — measured in fitTicks()
+
+let frames = [];              // [{release, day, kind, meta, empty}] — ALL of them
+let idx = 0;                  // which frame is showing, as an index into frames
+let winStart = 0;             // first frame the tick strip is showing
 let home = 0;                 // the frame for today — where the bar opens
 let open = true;
 let timer = null;
@@ -168,6 +204,45 @@ function render() {
   if (!f) { host.innerHTML = ""; return; }
   host.innerHTML = open ? expanded(f) : collapsed(f);
   bind();
+  fitTicks();
+}
+
+/* How many ticks the strip has room for, from the strip itself.
+ *
+ * Measured after the bar is in the document, because the width this depends on
+ * is the one the flex row hands out -- there is no arithmetic from the viewport
+ * that survives the panel being resized, the date column wrapping, or a button
+ * being added to the row later. Reading it back is the only answer that stays
+ * true, and it is one clientWidth per render.
+ *
+ * Redrawing just the strip when the count changes: everything else on the bar is
+ * already correct, and the slider in particular must not be rebuilt -- see
+ * paint().
+ */
+function fitTicks() {
+  if (!open || !frames.length) return;
+  const strip = document.getElementById("tl-ticks");
+  const room = strip && strip.clientWidth;
+  if (!room) return;                       // not laid out yet; keep what we have
+
+  const fits = Math.floor((room - TICK_SPARE + TICK_GAP) / (TICK_PX + TICK_GAP));
+  const next = Math.max(MIN_VISIBLE, Math.min(frames.length, fits));
+  if (next === visible) return;
+  visible = next;
+  // Keep the day being shown on the strip, and prefer to keep today's end of it
+  // in view: widening should reveal history, not scroll away from the forecast.
+  winStart = clampWin(Math.min(winStart, frames.length - visible));
+  followWindow(idx);
+  strip.innerHTML = tickStrip();
+}
+
+/* The window is a function of the layout, so it has to be re-asked when the
+ * layout changes. Debounced: a drag of a window edge fires this continuously,
+ * and each one is a measure plus, at most, one strip redraw. */
+let fitTimer = null;
+function onResize() {
+  if (fitTimer) clearTimeout(fitTimer);
+  fitTimer = setTimeout(() => { fitTimer = null; fitTicks(); }, 120);
 }
 
 function collapsed(f) {
@@ -197,9 +272,14 @@ function collapsed(f) {
     </div>`;
 }
 
-function expanded(f) {
-  const last = frames.length - 1;
-  const ticks = frames.map((x, i) => {
+/* The tick strip: `visible` frames starting at winStart, each carrying its
+ * ABSOLUTE index, so a click means the same thing however far the strip has
+ * panned. Pulled out of expanded() because paint() redraws just this during a
+ * scrub -- rebuilding the whole bar would replace the range input under the
+ * reader's finger and end the drag mid-gesture. */
+function tickStrip() {
+  return frames.slice(winStart, winStart + visible).map((x, n) => {
+    const i = winStart + n;
     const on = i === idx;
     const fc = isForecast(x);
     const flagged = isFlagged(x);
@@ -220,6 +300,11 @@ function expanded(f) {
       class="tl-tick shrink-0 rounded-sm transition-all"
       style="width:${w}px;height:${h}px;background:${bg};${ring}"></button>`;
   }).join("");
+}
+
+function expanded(f) {
+  const last = frames.length - 1;
+  const ticks = tickStrip();
 
   // Fixed width, always rendered, even on a complete day. The note line appears
   // and disappears as the timeline moves, and if it were allowed to size this
@@ -233,7 +318,7 @@ function expanded(f) {
   const noteStr = noteText(f);
   const tone = isForecast(f) ? (f.empty ? "text-slate-400" : "text-sky-700")
                              : "text-amber-700";
-  const note = `<div class="text-[10.5px] ${tone} leading-[1.25] h-[26px] overflow-hidden"
+  const note = `<div id="tl-note" class="text-[10.5px] ${tone} leading-[1.25] h-[26px] overflow-hidden"
        title="${noteStr}">${noteStr || "&nbsp;"}</div>`;
 
   const step = (id, glyph, label, off) => `
@@ -271,7 +356,8 @@ function expanded(f) {
         ${step("tl-prev", "◀", "Previous day", idx === 0)}
 
         <div class="flex-1 min-w-0">
-          <div class="flex items-end justify-center gap-[3px] h-[24px]">${ticks}</div>
+          <div id="tl-ticks"
+               class="flex items-end justify-center gap-[3px] h-[24px] overflow-hidden">${ticks}</div>
           <input id="tl-range" type="range" min="0" max="${last}" value="${idx}" step="1"
                  class="w-full mt-1 accent-sky-600" aria-label="Day shown"
                  aria-valuetext="${frameLabel(f)}${noteStr ? `, ${noteStr}` : ""}"/>
@@ -281,7 +367,7 @@ function expanded(f) {
         ${todayBtn}
 
         <div class="shrink-0 w-[196px] text-right leading-tight">
-          <div class="text-[12.5px] font-semibold text-slate-800 tabular-nums">${frameLabel(f)}</div>
+          <div id="tl-label" class="text-[12.5px] font-semibold text-slate-800 tabular-nums">${frameLabel(f)}</div>
           ${note}
         </div>
 
@@ -289,6 +375,74 @@ function expanded(f) {
                 class="shrink-0 text-slate-400 hover:text-slate-700 text-[13px]">✕</button>
       </div>
     </div>`;
+}
+
+/* Update the bar for a new `idx` WITHOUT rebuilding it.
+ *
+ * render() replaces host.innerHTML, which replaces the range input -- and a
+ * replaced input is one the browser is no longer tracking a drag on, so the
+ * thumb stops dead under the finger. That is why scrubbing never felt smooth:
+ * every pixel of movement destroyed the control being moved. Nothing about the
+ * bar's STRUCTURE depends on which day is showing (the tick count is fixed, the
+ * slider's range never changes), so a day change only has to repaint.
+ *
+ * The input itself is written to only when something other than the reader
+ * moved the cursor; writing the value they are already dragging is at best a
+ * no-op and at worst a fight with the pointer.
+ */
+function paint({fromSlider = false} = {}) {
+  if (!host) return;
+  const f = current();
+  if (!f) return;
+  // Collapsed is a different control with none of these parts in it, and it
+  // carries the date too -- so there is nothing to patch, only to rebuild.
+  if (!open) return render();
+  const el = (id) => document.getElementById(id);
+
+  const playBtn = el("tl-play");
+  if (playBtn) {
+    playBtn.innerHTML = timer ? "❚❚" : "▶";
+    playBtn.title = timer ? "Pause" : "Play through the days";
+    playBtn.setAttribute("aria-label", timer ? "Pause" : "Play");
+  }
+
+  const strip = el("tl-ticks");
+  if (strip) strip.innerHTML = tickStrip();
+
+  const label = el("tl-label");
+  if (label) label.textContent = frameLabel(f);
+
+  const noteStr = noteText(f);
+  const note = el("tl-note");
+  if (note) {
+    note.innerHTML = noteStr || "&nbsp;";
+    note.title = noteStr;
+    note.className = "text-[10.5px] leading-[1.25] h-[26px] overflow-hidden " +
+      (isForecast(f) ? (f.empty ? "text-slate-400" : "text-sky-700") : "text-amber-700");
+  }
+
+  const range = el("tl-range");
+  if (range) {
+    if (!fromSlider) range.value = String(idx);
+    range.setAttribute("aria-valuetext",
+      `${frameLabel(f)}${noteStr ? `, ${noteStr}` : ""}`);
+  }
+
+  const prev = el("tl-prev"); if (prev) prev.disabled = idx === 0;
+  const next = el("tl-next"); if (next) next.disabled = idx === frames.length - 1;
+
+  const today = el("tl-today");
+  if (today) {
+    const atHome = idx === home;
+    today.classList.toggle("invisible", atHome);
+    today.classList.toggle("pointer-events-none", atHome);
+    today.disabled = atHome;
+    // Hidden from the pointer AND from the reading order, the same way the first
+    // render writes it -- a button that is invisible but still tabbable is a
+    // focus trap on an empty rectangle.
+    today.tabIndex = atHome ? -1 : 0;
+    today.setAttribute("aria-hidden", atHome ? "true" : "false");
+  }
 }
 
 function bind() {
@@ -302,9 +456,58 @@ function bind() {
   on("tl-prev", "click", () => { stop(); go(idx - 1); });
   on("tl-next", "click", () => { stop(); go(idx + 1); });
   on("tl-today", "click", () => { stop(); go(home); });
-  on("tl-range", "input", (e) => { stop(); go(Number(e.target.value)); });
-  for (const b of host.querySelectorAll(".tl-tick")) {
-    b.addEventListener("click", () => { stop(); go(Number(b.dataset.i)); });
+  // Scrubbing is two things at two speeds. The BAR follows the thumb exactly,
+  // every event, because that is the feedback that makes a drag feel attached to
+  // the finger. The MAP follows when the thumb settles: each day is a fetch and
+  // a re-join, and firing one per pixel across three weeks would queue dozens of
+  // loads for days nobody stopped on. SCRUB_MS is short enough that a pause
+  // mid-drag still shows you where you are.
+  on("tl-range", "input", (e) => {
+    stop();
+    scrub(Number(e.target.value), true);
+  });
+  // Letting go commits immediately rather than waiting out the debounce.
+  on("tl-range", "change", (e) => commit(Number(e.target.value)));
+  // One listener on the strip rather than one per tick: paint() replaces all
+  // twenty-three of them on every event of a drag, and re-attaching that many
+  // handlers sixty times a second is work the drag can feel.
+  on("tl-ticks", "click", (e) => {
+    const t = e.target.closest ? e.target.closest(".tl-tick") : null;
+    if (!t) return;
+    stop();
+    go(Number(t.dataset.i));
+  });
+}
+
+// ---- scrubbing ---------------------------------------------------------------
+
+const SCRUB_MS = 110;         // how long the thumb must settle before the map moves
+let scrubTimer = null;
+let shown = -1;               // the frame the MAP is on, which lags idx while dragging
+
+function scrub(next, fromSlider) {
+  if (next < 0 || next >= frames.length || next === idx) return;
+  idx = next;
+  followWindow(idx);
+  paint({fromSlider});
+  if (scrubTimer) clearTimeout(scrubTimer);
+  scrubTimer = setTimeout(() => commit(idx), SCRUB_MS);
+}
+
+/* Put the map on the frame the bar is showing, if it is not there already. */
+function commit(next) {
+  if (scrubTimer) { clearTimeout(scrubTimer); scrubTimer = null; }
+  if (next >= 0 && next < frames.length && next !== idx) {
+    idx = next;
+    followWindow(idx);
+    paint();
+  }
+  if (idx === shown) return;
+  shown = idx;
+  actions.show(frames[idx]);
+  for (let i = 1; i <= PREFETCH; i++) {
+    const ahead = frames[idx + i];
+    if (ahead) actions.prefetch(ahead);
   }
 }
 
@@ -313,12 +516,9 @@ function bind() {
 function go(next) {
   if (next < 0 || next >= frames.length || next === idx) return;
   idx = next;
-  render();
-  actions.show(frames[idx]);
-  for (let i = 1; i <= PREFETCH; i++) {
-    const ahead = frames[idx + i];
-    if (ahead) actions.prefetch(ahead);
-  }
+  followWindow(idx);
+  paint();
+  commit(idx);
 }
 
 function play() {
@@ -327,25 +527,32 @@ function play() {
   // play on the last day is to watch the whole sequence.
   if (idx >= frames.length - 1) {
     idx = 0;
-    actions.show(frames[0]);
+    followWindow(idx);
+    commit(idx);
   }
   timer = setInterval(() => {
     if (idx >= frames.length - 1) return stop();
     go(idx + 1);
   }, PLAY_MS);
-  render();
+  paint();
 }
 
 function stop() {
   if (!timer) return;
   clearInterval(timer);
   timer = null;
-  render();
+  paint();
 }
 
 // ---- the public surface -----------------------------------------------------
 
-export function init(a) { actions = Object.assign(actions, a); }
+export function init(a) {
+  actions = Object.assign(actions, a);
+  if (typeof window !== "undefined" && !init.listening) {
+    init.listening = true;
+    window.addEventListener("resize", onResize);
+  }
+}
 
 /* Mount the bar.
  *
@@ -398,8 +605,26 @@ export function build(index, showing, run) {
 
   if (!host || frames.length < 2) { if (host) host.innerHTML = ""; return; }
   idx = home;
+  shown = idx;                  // the map is already drawing today
+  // Open at the right-hand end: today and the whole forecast half, with whatever
+  // history the window has room for behind it.
+  winStart = clampWin(frames.length - visible);
   open = true;
   render();
+}
+
+/* Keep the tick window inside the range, and inside the day being shown. */
+function clampWin(start) {
+  return Math.max(0, Math.min(start, Math.max(0, frames.length - visible)));
+}
+
+/* Slide the strip the smallest distance that puts `i` on it. Stepping off the
+ * left edge therefore drops a day off the right, which is the whole trick: the
+ * ticks stay the size they were and the strip moves instead of filling up. */
+function followWindow(i) {
+  if (i < winStart) winStart = clampWin(i);
+  else if (i > winStart + visible - 1) winStart = clampWin(i - visible + 1);
+  else winStart = clampWin(winStart);
 }
 
 /* Keep the bar in step when something else changes what is shown. */
@@ -407,6 +632,10 @@ export function setCurrent(release, day = 0) {
   const found = frames.findIndex((f) => f.release === release && f.day === (day | 0));
   if (found < 0 || found === idx) return;
   idx = found;
+  // Something else moved the map, so the map is already there: record it, or the
+  // next scrub back to this day would fetch what is already on screen.
+  shown = idx;
+  followWindow(idx);
   render();
 }
 

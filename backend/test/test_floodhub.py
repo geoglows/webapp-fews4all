@@ -259,10 +259,15 @@ def test_round_trip(api, tmp):
     st, _f, cps = FH.sweep_gauges(SECRET, tmp, {"AF": "Afghanistan"},
                                   ["AF", "IN"], progress=False)
     enrich, stats = FH.enrich_warned(st, SECRET)
-    csv_path = os.path.join(tmp, "world_flood_status.csv")
-    FH.write_gauge_csv(st, enrich, stats.get("units") or {}, csv_path)
+    # JSON, not CSV: write_gauge_csv became write_gauges when this file started
+    # writing records rather than columns. Flood Hub's download is the one that
+    # can never be fetched again -- searchLatestFloodStatus answers for right now
+    # and keeps no archive -- so the format that keeps a null apart from an empty
+    # string won. The round trip is the point of this test, so it follows.
+    out_path = os.path.join(tmp, "world_flood_status.json")
+    FH.write_gauges(st, enrich, stats.get("units") or {}, out_path)
 
-    rows = M.read_flood_hub(csv_path)
+    rows = M.read_flood_hub(out_path)
     ok(len(rows) == len(st), f"read_flood_hub parses every gauge ({len(rows)}/{len(st)})")
     r = rows[0]
     ok(r["model"] == "flood_hub" and r["severity"] in ("warning", "danger", "extreme"),

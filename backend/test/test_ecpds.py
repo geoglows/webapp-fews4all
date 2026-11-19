@@ -85,7 +85,22 @@ def test_urls():
        "the folder is the DAY, not the 10-digit cycle stamp")
     ok(u.endswith("sumAL_medium_AL_2026102300.nc"),
        "...while the filename keeps the cycle hour")
-    ok(len(E.plan("2026102300")) == 8, "a cycle is eight files")
+    # Against config, not a literal: the list grew from eight to eleven when the
+    # three summary_alerts lead-band grids were added, and a hard-coded count
+    # fails on the day the set legitimately changes rather than on the day
+    # something goes wrong with it. What is worth pinning is that plan() returns
+    # exactly what config lists -- nothing dropped, nothing invented -- and that
+    # all three families are still in it, since a missing alert level drops
+    # GloFAS and a missing shapefile part makes the reporting points unreadable.
+    want = [n.format(stamp="2026102300") for n in C.GLOFAS_FILES]
+    got = E.plan("2026102300")
+    ok(got == want, f"a cycle is exactly what config lists ({len(got)} files)")
+    ok(sum(1 for n in got if n.startswith("sumAL_")) == 3,
+       "the three alert-level grids are there")
+    ok(sum(1 for n in got if n.startswith("summary_alerts_")) == 3,
+       "...and the three lead-band grids models.py reads for the day spans")
+    ok(sum(1 for n in got if n.startswith("RPG_U")) == 5,
+       "...and all five parts of the reporting-point shapefile")
     ok(sum(1 for n in E.plan("2026102300") if n.startswith("sumAL")) == 3,
        "three of them are alert levels, which must arrive together")
 
@@ -114,12 +129,13 @@ def _t(day):
 def test_fetch(store, tmp):
     print("\nTaking the files")
     rec = E.fetch(tmp, USER, PASSWORD, stamp="2026102300")
-    ok(rec["fetched"] == 8, f"all eight land ({rec['fetched']})")
+    n = len(C.GLOFAS_FILES)
+    ok(rec["fetched"] == n, f"every file in the plan lands ({rec['fetched']}/{n})")
     ok(os.path.exists(os.path.join(tmp, "RPG_U2026102300.dbf")),
        "including every part of the shapefile")
 
     rec = E.fetch(tmp, USER, PASSWORD, stamp="2026102300")
-    ok(rec["skipped"] == 8 and rec["fetched"] == 0,
+    ok(rec["skipped"] == n and rec["fetched"] == 0,
        "a rerun skips them all — the size matches what the store advertises")
 
     ok(not [f for f in os.listdir(tmp) if f.endswith(".part")],

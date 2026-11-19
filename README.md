@@ -26,7 +26,7 @@ npm run preview    # preview the built site
 - `backend/daily/` — the per-run pipeline (steps 2–5, and `run_daily.py`)
 - `backend/static/` — the builds that only change when the inputs do (cell registry, tiles, crosswalks)
 - `backend/common/` — config, model readers, the run record, shared table writers
-- `backend/test/` — `python3 backend/test/test_guards.py`, the live-data guards
+- `backend/test/` — five suites, each run as a plain script (`python3 backend/test/test_guards.py`); no pytest, no fixtures
 - `test/` — `npm test` (node --test); pure modules only
 - `Other/parked/` — code removed from the app but kept, each file noting how to restore it
 - `Files/` — input CSVs, basin parquets, impact stats (gitignored)
@@ -67,8 +67,19 @@ those connections exist, and the only place to look for them.
 ```
 python3 backend/daily/run_daily.py                       # steps 2-5, published at the end
 python3 backend/daily/run_daily.py --input <folder>      # rerun one archived day
-python3 backend/test/test_guards.py                      # the live-data guards
+for t in backend/test/test_*.py; do python3 "$t"; done   # all five suites
 ```
+
+The suites run as plain scripts and print a pass/fail line each; they are not
+pytest tests and collecting them with pytest will not work. What each covers:
+
+| Suite | What it pins |
+|---|---|
+| `test_guards.py` | which models get into a release — staleness, volume, the baseline, the release pointer, the GEOGLOWS artifact extent |
+| `test_publish.py` | step 5 clearing its own output, how far a model says it forecasts, and the reach-id spelling step 2 joins on |
+| `test_fetch.py` | the GEOGLOWS bucket: listing, paging, short reads, the input pointer |
+| `test_ecpds.py` | the GloFAS fetch: URL shape, the file set a cycle owes, credentials never reaching a log |
+| `test_floodhub.py` | the Flood Hub round trip, and that the API key never appears in output |
 
 The four steps are not independent — step 3 rewrites step 2's join table, step 4
 rewrites step 3's cells.csv — so a release is only readable once all four have

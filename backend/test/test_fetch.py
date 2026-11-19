@@ -46,7 +46,13 @@ def _objects(cycle):
     out = [(f"map-tables/{cycle}/mapstyletable_"
             f"{cycle[0:4]}-{cycle[4:6]}-{cycle[6:8]}-{h:02d}.csv", len(BODY))
            for h in range(0, 24, 3)]
-    out += [(f"map-tables/{cycle}/mapstyletable_{v}_{cycle}.parquet", 1000 + v)
+    # len(BODY), not a made-up number: the fetcher checks what it got against
+    # what the listing advertised, so a fake that advertises a size it does not
+    # serve fails every download. It went unnoticed while CSVs were preferred --
+    # those were advertised honestly -- and bit the moment parquet became the
+    # first choice. A deliberate short read is arranged with FakeBucket.truncate,
+    # which is where that case belongs.
+    out += [(f"map-tables/{cycle}/mapstyletable_{v}_{cycle}.parquet", len(BODY))
             for v in (101, 102, 201)]
     return out
 
@@ -181,8 +187,14 @@ def test_transfer(bucket, tmp):
 def test_run(tmp):
     print("\nA whole run")
     rel = F.main(input_root=tmp)
-    dest = os.path.join(tmp, rel)
+    # Through C.raw_dir, not a join: a day's downloads live at
+    # <root>/YYYY/MM/DD/raw_downloads, and this used to look for a flat
+    # <root>/YYYY-MM-DD from before the tree was nested by date. Deriving the
+    # path the same way step 1 does is what keeps the two from drifting apart
+    # again -- the test should fail when the layout moves, not when it doesn't.
+    dest = C.raw_dir(rel, root=tmp)
     ok(rel == "2026-10-21", f"the release is named for the cycle ({rel})")
+    ok(os.path.isdir(dest), f"the downloads land in the dated tree ({dest})")
 
     with open(os.path.join(dest, F.FETCH_RECORD), encoding="utf-8") as f:
         rec = json.load(f)

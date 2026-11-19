@@ -1102,7 +1102,13 @@ def current_release(output_dir=None):
         with open(release_pointer(output_dir), encoding="utf-8") as f:
             name = f.read().strip()
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", name):
-            path = os.path.join(root, name)
+            # release_dir, not join: a release lives at <root>/YYYY/MM/DD, and
+            # joining the flat name made this test a path that never exists. It
+            # therefore printed "does not exist" on EVERY call and fell through
+            # to the newest release -- which is the one thing the pointer is
+            # here to prevent. Run step 3 on its own after rebuilding an older
+            # day and it would have published over today instead.
+            path = release_dir(name, root)
             if os.path.isdir(path):
                 return path
             print(f"  note: {RELEASE_POINTER} names {name}, which does not exist "

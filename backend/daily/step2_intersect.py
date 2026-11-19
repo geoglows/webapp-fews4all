@@ -339,10 +339,27 @@ def match_lines(records, crosswalk_path):
     # flooding every day of the horizon reached the map on day 9 alone and
     # vanished from today, which cost ~90% of the day-0 forecasts and made the
     # final tab the busiest. The value is a LIST, and every uid is mapped.
-    by_reach, day_of = {}, {}
+    #
+    # The key is NORMALISED, not the raw string. The crosswalk side already does
+    # this -- ids are written as floats in places and `str(int(float(raw)))` is
+    # how they are read back -- but the records side used str(native_id) raw, so
+    # a reach arriving as "110137730.0" was filtered out of the query below by
+    # .isdigit() AND missed by the lookup afterwards. The forecast vanished from
+    # the grid with no counter moving and nothing printed. Both sides now spell
+    # a reach id the same way, and anything that is not a number at all is
+    # counted and said out loud rather than dropped in silence.
+    by_reach, day_of, unkeyed = {}, {}, 0
     for r in records:
-        by_reach.setdefault(str(r["native_id"]), []).append(r["forecast_uid"])
+        key = _reach_int(r["native_id"])
+        if key is None:
+            unkeyed += 1
+            continue
+        by_reach.setdefault(str(key), []).append(r["forecast_uid"])
         day_of[r["forecast_uid"]] = str(r.get("day_from", ""))
+    if unkeyed:
+        print(f"  note: {unkeyed:,} reach forecast(s) carry a native_id that is "
+              f"not a number and cannot be matched to the crosswalk",
+              file=sys.stderr)
     if not by_reach:
         return [], (0, 0)
 
@@ -353,7 +370,7 @@ def match_lines(records, crosswalk_path):
     # Only the reaches that flagged today can match, so they are the filter --
     # the other 12.4 million rows never become Python objects at all.
     col = T.columns_where(crosswalk_path, ["h3_id"], C.CROSSWALK_ID_COL,
-                          [int(r) for r in by_reach if str(r).lstrip("-").isdigit()])
+                          [int(r) for r in by_reach])
     for key in ("h3_id", C.CROSSWALK_ID_COL):
         if key not in col:
             sys.exit(f"{os.path.basename(crosswalk_path)} has no '{key}' column "

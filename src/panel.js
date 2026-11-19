@@ -5,6 +5,7 @@ import {CONCUR_ANY_LABEL, CONCUR_COUNTS, CONCUR_LABEL, FIELD_LABELS, FLASH_MODEL
 import {concurCount, fillSource, flashChanceLabel, flashNearLabel, fmtCount, fmtFlashIssued, fmtValue, inkOn, modelLabel, modelLink, nearLabel, worstSeverity} from "./format.js";
 import {flashFill, flashOutline, paletteColor, rampFor, sevColor, unitLabel, view, visibleFlashModels, visibleModels, visibleSeverities, visibleTiers} from "./settings.js";
 import {icon} from "./icons.js";
+import {emptyAgreement, hiddenSetHeading, nothingToShowBody} from "./notices.js";
 // Safe to import: cells_tiles never imports the panel back — it reaches the panel
 // only through the callbacks main.js injects into its init().
 import {agreementTally, releaseDay, releaseModelStatus} from "./layers/cells_tiles.js";
@@ -488,13 +489,15 @@ export function renderPanel(props) {
   // concurrence reads that as the feature being broken rather than as the day
   // being quiet. Say which it is.
   const tally = agreementTally();
-  const askedFor = CONCUR_COUNTS.filter(
-    (n) => (view.concurHeat || view.concurMin) && (!view.concurMin || n >= view.concurMin));
   // `today`, not `drawn`: if the agreement exists and the reader has filtered it
   // away, that is the severity or model filter's news to break, not this banner's.
   // Claiming "no agreement today" over a day that has four three-model cells is
   // simply false, and it sends someone looking for a bug that is not there.
-  const emptyLevels = askedFor.filter((n) => !tally.today[n]);
+  //
+  // Which levels count as asked-for is in notices.js, and is the whole of what
+  // this used to get wrong: concurMin is a FLOOR, so "2 or more agree" asks one
+  // question, not one per level above it.
+  const emptyLevels = emptyAgreement(view, tally.today, CONCUR_COUNTS);
   // The ONLY amber one. Everything else here restates a choice the reader just
   // made, which is a status, not a warning; this is the one that is news about the
   // data. Five identical amber boxes made that distinction invisible and made an
@@ -507,16 +510,23 @@ export function renderPanel(props) {
 
   const hiddenSevs = SEV_KEYS.filter((k) => !visibleSeverities.has(k));
   const shownSevs = SEV_KEYS.filter((k) => visibleSeverities.has(k));
-  const sevNoticeHtml = hiddenSevs.length
-    ? (shownSevs.length
-        ? notice("info",
-            shownSevs.length === 1 ? `${SEVERITY[shownSevs[0]].label} only` : "Severity filtered",
-            `${hiddenSevs.map((k) => SEVERITY[k].label).join(" and ")} hidden.`)
-        // Nothing can be drawn at all, so this one keeps the pointer: the way out
-        // is less obvious than for a filter that still shows something.
-        : notice("info", "No severity shown",
-            "All three rungs are off — nothing can be drawn. Filters → Severity."))
-    : "";
+  // Guarded on a model being shown, the way the flash tier notice already guards
+  // on its overlay: with every river model unticked the dashed box below says the
+  // real thing, and a severity notice beside it describes a filter that cannot be
+  // hiding anything.
+  const sevHead = visibleModels.size
+    ? hiddenSetHeading(shownSevs.map((k) => SEVERITY[k].label),
+                       hiddenSevs.map((k) => SEVERITY[k].label),
+                       {filteredLabel: "Severity filtered"})
+    : null;
+  const sevNoticeHtml = !sevHead ? ""
+    : sevHead.kind === "none"
+      // Nothing can be drawn at all, so this one keeps the pointer: the way out
+      // is less obvious than for a filter that still shows something.
+      ? notice("info", "No severity shown",
+          "All three rungs are off — nothing can be drawn. Filters → Severity.")
+      : notice("info", sevHead.title,
+          `${hiddenSevs.map((k) => SEVERITY[k].label).join(" and ")} hidden.`);
 
   // This used to carry " Agreement counts models you've hidden." -- true while
   // concurCount used a `some` rule, and false since it moved to `every`. A cell
@@ -584,9 +594,7 @@ export function renderPanel(props) {
   // Only when something IS selected: with no models ticked the dashed box below
   // says it better, and with no severities the severity notice names the way out.
   const nothingHtml = (visibleModels.size && shownSevs.length && !tally.drawnTotal)
-    ? notice("info", "Nothing to show",
-        `Your filters leave no areas on the map` +
-        (activeFilters.length ? ` — ${activeFilters.join("; ")}.` : "."))
+    ? notice("info", "Nothing to show", nothingToShowBody(activeFilters))
     : "";
 
   // Section 1 — River Floods: the concurrence notice, the forecast tiles and
@@ -627,14 +635,20 @@ export function renderPanel(props) {
 
   const hiddenTiers = FLASH_TIERS.filter((t) => !visibleTiers.has(t));
   const shownTiers = FLASH_TIERS.filter((t) => visibleTiers.has(t));
-  const tierNoticeHtml = (visibleFlashModels.size && hiddenTiers.length)
-    ? (shownTiers.length
-        ? notice("info",
-            `${FLASH_TIER[shownTiers[0]].label} only`,
-            `${hiddenTiers.map((t) => FLASH_TIER[t].label).join(" and ")} hidden.`)
-        : notice("info", "No tiers shown",
-            "Both tiers are off — nothing can be drawn. Filters → Flash floods."))
-    : "";
+  // Through the same rule as the severities: this said "<first shown> only" for
+  // any non-empty set, which is true with two tiers and a lie the day a third
+  // arrives.
+  const tierHead = visibleFlashModels.size
+    ? hiddenSetHeading(shownTiers.map((t) => FLASH_TIER[t].label),
+                       hiddenTiers.map((t) => FLASH_TIER[t].label),
+                       {filteredLabel: "Tiers filtered"})
+    : null;
+  const tierNoticeHtml = !tierHead ? ""
+    : tierHead.kind === "none"
+      ? notice("info", "No tiers shown",
+          "Every tier is off — nothing can be drawn. Filters → Flash floods.")
+      : notice("info", tierHead.title,
+          `${hiddenTiers.map((t) => FLASH_TIER[t].label).join(" and ")} hidden.`);
   const flashSection =
     `<div id="section-flash" class="mt-12">` + sectionHeader("Flash Floods", "sec-flash") +
     bodyTag("sec-flash") + flashDroppedHtml + tierNoticeHtml +

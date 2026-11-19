@@ -52,6 +52,7 @@ can open. The working tables stay in staging and are thrown away with it.
 
 import csv
 import os
+import re
 import shutil
 import sys
 import time
@@ -93,6 +94,30 @@ def names_a_day(row, horizon):
     """
     lo, hi = span(row)
     return not (lo == 0 and hi >= horizon - 1)
+
+
+def model_reach(rows, horizon):
+    """{model: the furthest day it NAMES}, for the panel's horizon notice.
+
+    A row spanning the whole horizon is the absence of timing, not a claim about
+    the last day. Counting it made Flood Hub report a reach of 15 whenever a
+    single gauge published no window -- on which the panel then told the reader
+    that Flood Hub could see day 12 and simply had nothing to report, when in
+    truth no gauge had named any day at all. `last_day` was already built with
+    names_a_day; this is the same rule, per model, so the two stop disagreeing
+    inside one file.
+
+    A model with no dated row is left OUT rather than set to 0. The panel tests
+    Number.isFinite before using the value, so an absent entry reads as "makes
+    no claim about its horizon" -- which is the true statement, and a safer one
+    than 0, which would read as "reaches today and no further".
+    """
+    reach = {}
+    for r in rows:
+        m = r.get("model")
+        if m and names_a_day(r, horizon):
+            reach[m] = max(reach.get(m, 0), span(r)[1])
+    return reach
 
 
 def mark_peak_day(rows):
@@ -137,6 +162,38 @@ def mark_peak_day(rows):
     return stamped
 
 
+def clear_products(out):
+    """Remove what a PREVIOUS run of this step left in `out`, before writing.
+
+    The bug this exists for: the number of day files depends on the data. A run
+    whose furthest named day is 15 writes day_00..day_15; a rerun of the same
+    release that loses GloFAS writes day_00..day_06 and leaves the other nine
+    behind, dated from the superseded run and still announcing themselves as
+    this release. Release 2026-11-05 shipped like that -- seven files from one
+    run and nine from another, in one folder, with release.json agreeing with
+    only the first seven. run_daily's promote() swaps the whole folder, so
+    whatever is in here at that moment is what gets published.
+
+    A sweep of the names this step owns rather than rmtree of the folder: it is
+    pointed at a release directory, and a step that deletes a directory it was
+    merely pointed at is one typo away from removing a release. Anything here
+    that step 5 did not write is left alone and said out loud.
+    """
+    mine = {C.PROCESSED[k] for k in ("release", "cell_index", "forecasts", "flash")
+            if k in C.PROCESSED}
+    doomed = [f for f in sorted(os.listdir(out))
+              if f in mine
+              or re.fullmatch(r"day_\d+\.json", f)
+              or re.fullmatch(r"summary_.*\.csv", f)]
+    for f in doomed:
+        os.remove(os.path.join(out, f))
+    other = sorted(set(os.listdir(out)) - {".DS_Store"})
+    if other:
+        print(f"  note: left {len(other)} file(s) this step did not write: "
+              f"{', '.join(other[:4])}", file=sys.stderr)
+    return len(doomed)
+
+
 def style_tables():
     """The three tables step 5 used to write as CSV, as plain JSON.
 
@@ -178,6 +235,9 @@ def main(staged=None, release=None):
     out = os.path.join(staged, "processed")
     os.makedirs(out, exist_ok=True)
     print(f"Release: {release}\n")
+    swept = clear_products(out)
+    if swept:
+        print(f"  cleared {swept} file(s) from a previous run of this step\n")
     t0 = time.time()
 
     fc = read_rows(fc_path)
@@ -203,11 +263,7 @@ def main(staged=None, release=None):
 
     fc_cols = C.FORECAST_DELIVERY_COLUMNS
     print(f"  {'day':>4} {'cells':>9} {'forecasts':>10} {'naming it':>10} {'MB':>6}  models")
-    summary, reach = [], {}
-    for r in fc:
-        m = r.get("model")
-        if m:
-            reach[m] = max(reach.get(m, 0), span(r)[1])
+    summary, reach = [], model_reach(fc, horizon)
 
     for day in range(last + 1):
         here = [r for r in fc if span(r)[0] <= day <= span(r)[1]]

@@ -50,6 +50,27 @@ def models(*names):
     return {m: {"kind": "point", "path": "x", "records": [1]} for m in names}
 
 
+def publish(root, release, data=None):
+    """A release on disk the way the data tree really holds one, and return its path.
+
+    Two things make a day real, and both are easy to leave out of a fixture:
+    it lives at <root>/YYYY/MM/DD rather than <root>/YYYY-MM-DD, and
+    config.list_releases only counts it once processed/release.json is there,
+    because the manifest is written last and a half-copied folder must not read
+    as a release. A fixture that builds a flat folder gets an empty list back
+    from every lookup, and then every assertion about "no baseline" passes for
+    the wrong reason.
+    """
+    d = C.release_dir(release, root)
+    os.makedirs(os.path.join(d, "processed"), exist_ok=True)
+    with open(os.path.join(d, "processed", C.PROCESSED["release"]), "w",
+              encoding="utf-8") as f:
+        f.write("{}")
+    if data is not None:
+        MAN.write(d, data)
+    return d
+
+
 def test_release_naming(out):
     print("\nWhich date names the release")
     status = {"a": st(issued="2026-09-23", issued_from="issued_time", flagged=1),
@@ -87,8 +108,8 @@ def test_volume(out):
     print("\nVolume — a truncated download against a quiet day")
     root = os.path.join(out, "history")
     for i, n in enumerate([1000, 1100, 900, 1050, 950], start=10):
-        MAN.write(os.path.join(root, f"2026-09-{i}"),
-                  {"models": {"a": {"flagged": n, "status": C.MODEL_OK}}})
+        publish(root, f"2026-09-{i}",
+                {"models": {"a": {"flagged": n, "status": C.MODEL_OK}}})
     ok(MAN.baseline("a", root) == 1000, "the baseline is the median of recent runs")
 
     status = {"a": st(issued="2026-09-23", issued_from="issued_time", flagged=100)}
@@ -109,58 +130,85 @@ def test_baseline_abstains(out):
 
     two = os.path.join(out, "two")
     for d in ("2026-01-01", "2026-01-02"):
-        MAN.write(os.path.join(two, d), {"models": {"a": {"flagged": 5, "status": C.MODEL_OK}}})
+        publish(two, d, {"models": {"a": {"flagged": 5, "status": C.MODEL_OK}}})
     ok(MAN.baseline("a", two) is None, "two samples is not enough to set one")
 
     untrusted = os.path.join(out, "untrusted")
     for i, (n, status) in enumerate([(10, C.MODEL_DROPPED)] * 3 + [(1000, C.MODEL_OK)], start=1):
-        MAN.write(os.path.join(untrusted, f"2026-02-0{i}"),
-                  {"models": {"a": {"flagged": n, "status": status}}})
+        publish(untrusted, f"2026-02-0{i}",
+                {"models": {"a": {"flagged": n, "status": status}}})
     ok(MAN.baseline("a", untrusted) is None,
        "days the model was not trusted do not get to lower the bar")
 
-    broken = os.path.join(out, "broken", "2026-03-01")
-    os.makedirs(broken, exist_ok=True)
+    broken_root = os.path.join(out, "broken")
+    broken = publish(broken_root, "2026-03-01")
     with open(os.path.join(broken, C.MANIFEST_NAME), "w", encoding="utf-8") as f:
         f.write("{ not json")
     ok(MAN.read(broken) is None, "an unparseable run record reads as absent")
-    ok(MAN.baseline("a", os.path.join(out, "broken")) is None,
+    ok(MAN.baseline("a", broken_root) is None,
        "and costs the baseline rather than the run")
 
 
 def test_pointer(out):
-    print("\nThe release pointer")
-    C.write_release_pointer("2026-09-23", out)
-    os.makedirs(os.path.join(out, "2026-09-23"), exist_ok=True)
-    ok(C.current_release(out) == os.path.join(out, "2026-09-23"),
-       "a written pointer is followed")
+    """The pointer, resolved against the DATED tree.
 
-    os.makedirs(os.path.join(out, "2026-09-30"), exist_ok=True)
-    ok(C.current_release(out) == os.path.join(out, "2026-09-23"),
+    This used to build flat <root>/YYYY-MM-DD folders, which is the layout the
+    output tree had before it was nested by date. current_release joined the
+    flat name too, so the two agreed with each other and disagreed with every
+    real release on disk: the pointer resolved to a path that never existed,
+    printed "does not exist", and fell through to the newest release on every
+    call. Both now go through release_dir, which is the one place a date becomes
+    a path -- so if that ever changes again, these lines fail rather than the
+    pipeline quietly publishing the wrong day.
+    """
+    print("\nThe release pointer")
+    older = publish(out, "2026-09-23")
+    C.write_release_pointer("2026-09-23", out)
+    ok(C.current_release(out) == older, "a written pointer is followed")
+
+    newer = publish(out, "2026-09-30")
+    ok(C.current_release(out) == older,
        "even when a newer folder exists beside it — a rerun must not drift forward")
 
     with open(C.release_pointer(out), "w", encoding="utf-8") as f:
         f.write("2026-12-25\n")
-    ok(C.current_release(out) == os.path.join(out, "2026-09-30"),
+    ok(C.current_release(out) == newer,
        "a pointer at a folder that is not there falls back to the newest")
 
     os.remove(C.release_pointer(out))
-    ok(C.current_release(out) == os.path.join(out, "2026-09-30"),
+    ok(C.current_release(out) == newer,
        "and so does no pointer at all")
 
 
 def test_suppression(out):
-    """The GEOGLOWS blackout box. TEMPORARY — delete this with the box itself.
+    """The GEOGLOWS climatology artifact: its extent, and the switch over it.
 
-    Pinned because a blackout that silently stops working is the worse half of the
-    bargain: the blob comes back and nobody connects it to a change here. And
-    because a blackout that silently WIDENS is worse still.
+    The blackout is OFF, deliberately — the artifact is drawn rather than hidden
+    so the defect is arguable instead of invisible. This used to assert that a
+    blackout box was configured, which was right while one was, and became an
+    assertion that the application was in the state we had just decided to leave.
+
+    What is worth pinning now is narrower and longer-lived. The EXTENT must stay
+    configured: reporting/stats/blob_extent.py measures the artifact against it
+    every run, and a release-by-release table whose extent moved underneath it is
+    comparing two different regions and saying nothing. And the switch must only
+    ever be off, or exactly that extent — a blackout that silently WIDENS is the
+    worse half of the bargain, because the forecasts it swallows leave no trace
+    on the map to notice.
+
+    The mechanism itself is exercised below with the box forced on, so turning it
+    back on stays a one-line change that is known to work rather than a hope.
     """
-    print("\nThe GEOGLOWS blackout box")
+    print("\nThe GEOGLOWS climatology artifact")
     from common import models as M
 
-    ok(getattr(C, "GEOGLOWS_BLACKOUT_BOX", None),
-       f"a box is configured ({getattr(C, 'GEOGLOWS_BLACKOUT_BOX', None)})")
+    extent = getattr(C, "GEOGLOWS_ARTIFACT_BOX", None)
+    ok(extent and len(extent) == 4,
+       f"the artifact extent is configured ({extent})")
+
+    live = getattr(C, "GEOGLOWS_BLACKOUT_BOX", None)
+    ok(live is None or tuple(live) == tuple(extent or ()),
+       f"the blackout is off, or exactly that extent — never a wider one ({live})")
 
     saved = C.GEOGLOWS_BLACKOUT_BOX
     try:
