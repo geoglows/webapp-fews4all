@@ -30,10 +30,11 @@ Screenshots/
 vgrid/
 Software/
 Other/
-# Where the Claude desktop app drops files delivered from a chat session. It is
-# recreated at the repo root every time one arrives, so this is a standing rule
-# rather than something to clean up by hand. Nothing in it is a source: if a
-# delivered file matters, move it into the folder it belongs to.
+# A chat session can drop delivered files at the repo root. The rule stays so
+# they never reach a commit, but nothing should land here in the first place:
+# a manual, a figure or a table is written into reporting/ by the script that
+# makes it, and read from there. A delivered copy is a second copy, and a
+# second copy is the one that goes stale.
 Claude outputs/
 # NOTE: a bare `.gitignore` rule used to sit here. It matched EVERY nested
 # .gitignore in the repo, so docs/.gitignore was silently never committed and

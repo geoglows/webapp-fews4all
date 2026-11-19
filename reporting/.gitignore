@@ -1,0 +1,51 @@
+# What is and is not a source, for everything under reporting/.
+#
+# One file rather than one per document folder: a second document would other-
+# wise need its own copy, and copies drift. Patterns here are matched against
+# every path below reporting/, so a new folder inherits these rules without anyone
+# remembering to set it up.
+#
+# THE RULE: git holds the things a person writes -- .tex, .py, .mmd, .md that
+# was typed rather than generated, and the images/ that cannot be regenerated.
+# Everything a script produces is excluded, however useful it is. A generated
+# table or figure that is also committed is a second copy of the truth, and the
+# committed one is the one that goes quietly stale while still looking official.
+# The cost is that a fresh clone must run reporting/regenerate.sh once before the
+# manual will compile. That is the intended trade.
+
+# ---- generated ------------------------------------------------------------
+# out/ holds everything any generator produces: the .md and .tex tables from
+# stats/*.py, the .pdf figures, the workbook, and latexmk's own output under
+# out/manual/. One directory, one line. Nothing in it is reviewable in a diff
+# and all of it comes back from `./regenerate.sh`, so none of it is kept.
+out/
+
+# A .tex or .pdf that escaped out/ -- a stray run with an explicit --tex path,
+# or a figure rendered in place. The .tex files that ARE sources live in
+# diagrams/ and manual/, and are tracked already, so these patterns cannot
+# reach them: .gitignore does not untrack a file git is already following.
+*.aux
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.toc
+*.xdv
+*.synctex.gz
+*.pdf
+*.xlsx
+*.csv
+
+# Python leavings from running the generators.
+__pycache__/
+*.pyc
+
+# ---- not sources -----------------------------------------------------------
+# Superseded originals -- the Word manual, the first timelines -- kept on disk
+# for reference. Deliberately NOT in git: they are binaries that cannot be
+# diffed or reviewed, they will never be edited again, and adding them would
+# put them in the repo's history permanently.
+archive/
+
+# macOS
+.DS_Store

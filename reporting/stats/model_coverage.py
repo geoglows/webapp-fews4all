@@ -4,9 +4,12 @@
 Run it and it re-derives the table from whatever is on disk, so the numbers in
 the manual and on a poster can be refreshed rather than retyped.
 
-    python3 docs/user-manual/tables/model_coverage.py
-    python3 docs/user-manual/tables/model_coverage.py --tex tables/model-coverage.tex
-    python3 docs/user-manual/tables/model_coverage.py --xlsx coverage.xlsx --font-size 25
+    python3 reporting/stats/model_coverage.py
+    python3 reporting/stats/model_coverage.py --since 2026-11-13
+
+Every run prints the table and writes reporting/out/tables/model-coverage.{csv,tex}.
+Nothing it writes is committed: see reporting/stats/_emit.py. For the spreadsheet,
+run reporting/stats/workbook.py, which puts this and every other table in one book.
 
 By default it uses every release from FORECASTER_SINCE onward, so the window
 widens on its own as the pipeline runs. Pass --since to move the floor, or -n
@@ -38,16 +41,21 @@ import os
 import statistics
 import sys
 
-ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", ".."))
+ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
 sys.path.insert(0, os.path.join(ROOT, "backend"))
 
 from common import config as C  # noqa: E402
+
+import _emit  # noqa: E402  -- shared with the other tables in this folder
 
 # Releases before this one predate the forecast timeline, so their day spans
 # were not assigned the way the ones here are and the two are not comparable.
 # Counting from a date rather than a release count means the window widens by
 # itself as the pipeline runs, instead of silently sliding off the start.
-FORECASTER_SINCE = "2026-11-06"
+# 13 Nov is the first release built after the day-collapse bug in step 2 was
+# fixed; anything earlier carries ~10% of GEOGLOWS's day-0 forecasts and is not
+# comparable. It is also the first release with the GEOGLOWS blackout lifted.
+FORECASTER_SINCE = "2026-11-13"
 
 SEVERITIES = ["warning", "danger", "extreme"]
 # The side panel's names, in the order the panel lists them.
@@ -161,8 +169,8 @@ def shared_percentages(releases, day):
     for release in releases:
         conc = concurrence(release, day)
         out[release] = {
-            label: {2: (v[2] / v["cells"] if v["cells"] else 0.0),
-                    3: (v[3] / v["cells"] if v["cells"] else 0.0)}
+            label: {2: (v[2] / v["cells"] if v["cells"] else None),
+                    3: (v[3] / v["cells"] if v["cells"] else None)}
             for label, v in conc.items()}
     return out
 
@@ -178,13 +186,20 @@ def percentages(per_release):
             row[label] = {
                 "alerts": issued,
                 "share": issued / total if total else 0.0,
-                **{s: (counts[s] / issued if issued else 0.0) for s in SEVERITIES},
+                # A model that issued nothing has no severity mix. Scoring that
+                # as 0% averages a non-event in with real ones -- it is what
+                # turned three silent Flood Hub days into "0.0% - 100.0%".
+                **{s: (counts[s] / issued if issued else None)
+                   for s in SEVERITIES},
             }
         out[release] = row
     return out
 
 
 def span(values, average=False):
+    values = [v for v in values if v is not None]
+    if not values:
+        return "\u2014"
     """A low--high range, or a mean when --average is on.
 
     Collapses to a single figure when low and high agree, so a column that
@@ -199,59 +214,50 @@ def span(values, average=False):
 
 
 def build_rows(pct, shared, average=False):
-    rows = []
+    """One row per metric, one column per model."""
+    col = {}
     for label in LABELS.values():
         cells = [pct[r][label] for r in pct]
         sh = [shared[r][label] for r in shared]
-        rows.append([
-            label,
+        col[label] = [
             span([c["share"] for c in cells], average),
             *[span([c[s] for c in cells], average) for s in SEVERITIES],
             span([x[2] for x in sh], average),
             span([x[3] for x in sh], average),
-        ])
-    return rows
+        ]
+    return [[m] + [col[lb][i] for lb in LABELS.values()]
+            for i, m in enumerate(METRICS)]
 
 
-HEADER = ["River model", "Share of alerts", "Warning", "Danger", "Extreme",
-          "In 2-model cells", "In 3-model cells"]
-# The page is narrower than the terminal: eight columns of ranges overflow the
-# text block by about a third at full width. Only the printed table is squeezed.
-TEX_HEADER = ["River model", "Share of alerts", "Warning", "Danger", "Extreme",
-              "2-model", "3-model"]
+# Transposed: metrics down the side, the three models across the top. Six
+# metrics by three models fits a poster column far better than three rows of
+# seven ranges, which had to be squeezed to clear the page width.
+METRICS = ["Share of Alerts", "Warning", "Danger", "Extreme",
+           "In 2-model Cells", "In 3-model Cells"]
+HEADER = ["River Model"] + list(LABELS.values())
 
-
-def print_table(rows, releases, day, average, note=None):
-    width = [max(len(r[i]) for r in [HEADER] + rows) for i in range(len(HEADER))]
-    rule = "  ".join("-" * w for w in width)
-    kind = "mean" if average else "low–high range"
-    print(f"\nDay {day} of {len(releases)} release(s): "
-          f"{releases[0]} to {releases[-1]}   ({kind})\n")
-    print("  ".join(h.ljust(w) for h, w in zip(HEADER, width)))
-    print(rule)
-    for row in rows:
-        print("  ".join(c.ljust(w) for c, w in zip(row, width)))
-    print()
-    if note:
-        print(f"note: {note}\n")
 
 
 def write_tex(path, rows, releases, day, note=None):
-    """A \\input-able table, matching the manual's booktabs style."""
+    """A \\input-able table, matching the manual's booktabs style. The caption
+    and the column spec live here rather than in _emit because they are part of
+    what this particular table means, not of how tables are written."""
     esc = lambda s: s.replace("%", r"\%").replace("–", "--")
     note_tex = f" {esc(note)}" if note else ""
     body = "\n".join("  " + " & ".join(esc(c) for c in r) + r" \\" for r in rows)
-    tex = f"""% Generated by docs/user-manual/tables/model_coverage.py -- do not hand-edit.
+    tex = f"""% Generated by reporting/stats/model_coverage.py -- do not hand-edit.
 % Source: day {day} of releases {releases[0]} to {releases[-1]}.
 \\begin{{table}}[htbp]
 \\centering
 \\small
 \\setlength{{\\tabcolsep}}{{3pt}}
-\\begin{{tabular}}{{l r r r r r r}}
+\\begin{{tabular}}{{l r r r}}
 \\toprule
-{" & ".join(esc(h) for h in TEX_HEADER)} \\\\
+{" & ".join(esc(h) for h in HEADER)} \\\\
 \\midrule
 {body}
+\\midrule
+\\multicolumn{{4}}{{l}}{{\\itshape Day~{day}, {releases[0]} to {releases[-1]}}} \\\\
 \\bottomrule
 \\end{{tabular}}
 \\caption[What each river model contributes]{{%
@@ -262,104 +268,19 @@ def write_tex(path, rows, releases, day, note=None):
   issued for that day, so the column adds to 100\\%. The severity columns are
   the mix \\emph{{within}} each model, so each row adds to 100\\%. Shares say
   who issues the alerts, not who is right.
-  The last two columns change denominator: they are the share of that model's
+  The last two rows change denominator: they are the share of that model's
   own flagged \\emph{{cells}} that also carry one, or two, other models --
   corroboration is spatial, so it is counted on cells rather than on
   alerts.{note_tex}}}
 \\label{{tab:model-coverage}}
 \\end{{table}}
 """
-    with open(path, "w", encoding="utf-8") as fh:
-        fh.write(tex)
-    print(f"wrote {path}")
+    return _emit.write_text(path, tex)
 
 
-def write_xlsx(path, rows, per_release, pct, releases, day, font_size):
-    from openpyxl import Workbook
-    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
-
-    font = "Arial"
-    head_fill = PatternFill("solid", fgColor="1F3864")
-    band = PatternFill("solid", fgColor="EDF2F9")
-    edge = Side(style="thin", color="B7C3D4")
-    box = Border(left=edge, right=edge, top=edge, bottom=edge)
-
-    wb = Workbook()
-    sheet = wb.active
-    sheet.title = "Summary"
-    sheet["A1"] = "FEWS4All — what each river model contributes"
-    sheet["A1"].font = Font(name=font, size=font_size + 3, bold=True,
-                            color="1F3864")
-    sheet["A2"] = (f"Range across day {day} of {len(releases)} releases, "
-                   f"{releases[0]} to {releases[-1]}")
-    sheet["A2"].font = Font(name=font, size=font_size, italic=True,
-                            color="44546A")
-
-    top = 4
-    for i, head in enumerate(HEADER, 1):
-        cell = sheet.cell(top, i, head)
-        cell.font = Font(name=font, size=font_size, bold=True, color="FFFFFF")
-        cell.fill = head_fill
-        cell.border = box
-        cell.alignment = Alignment(horizontal="center" if i > 1 else "left",
-                                   vertical="center", wrap_text=True)
-    for n, row in enumerate(rows):
-        for i, value in enumerate(row, 1):
-            cell = sheet.cell(top + 1 + n, i, value)
-            cell.font = Font(name=font, size=font_size)
-            cell.border = box
-            cell.alignment = Alignment(
-                horizontal="center" if i > 1 else "left", vertical="center")
-            if n % 2:
-                cell.fill = band
-    for col, width in zip("ABCDEFG", [26, 24, 22, 22, 22, 24, 24]):
-        sheet.column_dimensions[col].width = width
-    for r in range(1, top + len(rows) + 1):
-        sheet.row_dimensions[r].height = font_size + 17
-
-    raw = wb.create_sheet("By release")
-    raw.append(["Release", "Model", *[s.title() for s in SEVERITIES],
-                "Alerts", "Share of alerts"])
-    for release in releases:
-        for label in LABELS.values():
-            counts = per_release[release][label]
-            raw.append([release, label, *[counts[s] for s in SEVERITIES],
-                        pct[release][label]["alerts"],
-                        pct[release][label]["share"]])
-    for i in range(1, 8):
-        cell = raw.cell(1, i)
-        cell.font = Font(name=font, size=font_size, bold=True, color="FFFFFF")
-        cell.fill = head_fill
-        cell.border = box
-        cell.alignment = Alignment(horizontal="center", vertical="center",
-                                   wrap_text=True)
-    for r in range(2, raw.max_row + 1):
-        for i in range(1, 8):
-            cell = raw.cell(r, i)
-            cell.font = Font(name=font, size=font_size)
-            cell.border = box
-            cell.alignment = Alignment(
-                horizontal="center" if i > 2 else "left", vertical="center")
-            if i == 7:
-                cell.number_format = "0.0%"
-            elif i > 2:
-                cell.number_format = "#,##0"
-            if r % 2:
-                cell.fill = band
-        raw.row_dimensions[r].height = font_size + 13
-    raw.row_dimensions[1].height = font_size + 25
-    for col, width in zip("ABCDEFG", [22, 22, 16, 14, 16, 15, 20]):
-        raw.column_dimensions[col].width = width
-    raw.freeze_panes = "A2"
-
-    wb.save(path)
-    print(f"wrote {path}")
-
-
-def main(argv=None):
-    ap = argparse.ArgumentParser(
-        description=__doc__.split("\n\n")[0],
-        formatter_class=argparse.RawDescriptionHelpFormatter)
+def add_args(ap):
+    """The flags every table script shares, so --since means the same thing in
+    all of them and workbook.py can hand the same namespace to each."""
     ap.add_argument("--since", metavar="YYYY-MM-DD", default=FORECASTER_SINCE,
                     help=f"earliest release to include (default "
                          f"{FORECASTER_SINCE}, the first release published "
@@ -372,14 +293,10 @@ def main(argv=None):
                          "docstring before changing it)")
     ap.add_argument("--average", action="store_true",
                     help="print means instead of low-high ranges")
-    ap.add_argument("--tex", metavar="PATH",
-                    help="also write an \\input-able LaTeX table")
-    ap.add_argument("--xlsx", metavar="PATH",
-                    help="also write a two-sheet workbook")
-    ap.add_argument("--font-size", type=int, default=25,
-                    help="point size for the workbook (default 25)")
-    args = ap.parse_args(argv)
+    return ap
 
+
+def pick_releases(args):
     every = C.list_releases()
     if not every:
         sys.exit(f"No published releases under {C.DATA_DIR}.\n"
@@ -391,12 +308,19 @@ def main(argv=None):
         if len(releases) < args.releases:
             print(f"note: asked for {args.releases} releases, found "
                   f"{len(releases)}", file=sys.stderr)
-    else:
-        releases = [r for r in every if r >= args.since]
-        if not releases:
-            sys.exit(f"No releases on or after {args.since}. "
-                     f"The newest is {every[-1]}.")
+        return releases
+    releases = [r for r in every if r >= args.since]
+    if not releases:
+        sys.exit(f"No releases on or after {args.since}. "
+                 f"The newest is {every[-1]}.")
+    return releases
 
+
+def build(args):
+    """Measure, and hand back the finished table. Separated from main() so that
+    workbook.py can collect every table in one process rather than shelling out
+    to each script and parsing what it printed."""
+    releases = pick_releases(args)
     per_release = collect(releases, args.day)
     empty = [r for r in releases
              if not any(sum(c.values()) for c in per_release[r].values())]
@@ -408,13 +332,61 @@ def main(argv=None):
     pct = percentages(per_release)
     shared = shared_percentages(releases, args.day)
     rows = build_rows(pct, shared, args.average)
+    silent = {m: sum(1 for r in releases if not pct[r][m]["alerts"])
+              for m in LABELS.values()}
     note = caveat(blacked_out(releases), releases)
-    print_table(rows, releases, args.day, args.average, note)
-    if args.tex:
-        write_tex(args.tex, rows, releases, args.day, note)
-    if args.xlsx:
-        write_xlsx(args.xlsx, rows, per_release, pct, releases, args.day,
-                   args.font_size)
+    quiet = [f"{m} ({n} of {len(releases)})" for m, n in silent.items() if n]
+    if quiet:
+        q = ("issued no day-%d alerts in some releases -- %s -- so its "
+             "severity mix is taken only from the days it spoke."
+             % (args.day, "; ".join(quiet)))
+        # capitalize() would lower-case the rest of the sentence, and the
+        # model names live in it -- "Flood Hub" came out "flood hub".
+        note = (note + " " + q) if note else q[0].upper() + q[1:]
+
+    # The per-release numbers the summary is a range over. They are not in the
+    # manual -- six metrics by three models is already as much as a page can
+    # carry -- but they are what you look at when a range looks wrong, so the
+    # workbook gets them on a second sheet.
+    detail = ("Coverage by release",
+              ["Release", "Model", *[s.title() for s in SEVERITIES],
+               "Alerts", "Share of alerts"],
+              [[release, label, *[per_release[release][label][s]
+                                  for s in SEVERITIES],
+                pct[release][label]["alerts"],
+                f"{pct[release][label]['share']:.1%}"]
+               for release in releases for label in LABELS.values()])
+
+    kind = "means" if args.average else "low–high ranges"
+    table = _emit.Table(
+        name="model-coverage",
+        title="What each river model contributes",
+        subtitle=f"Day {args.day}, {releases[0]} to {releases[-1]} "
+                 f"({len(releases)} releases, {kind})",
+        header=HEADER, rows=rows, note=note, sheet="Model coverage",
+        detail=detail, widths=[30, 26, 26, 26])
+    table.releases = releases
+    table.day = args.day
+    return table
+
+
+def main(argv=None):
+    ap = add_args(argparse.ArgumentParser(
+        description=__doc__.split("\n\n")[0],
+        formatter_class=argparse.RawDescriptionHelpFormatter))
+    ap.add_argument("--tex", metavar="PATH", default=None,
+                    help="where to write the LaTeX table (default "
+                         "reporting/out/tables/model-coverage.tex)")
+    ap.add_argument("--csv", metavar="PATH", default=None,
+                    help="where to write the CSV table (default "
+                         "reporting/out/tables/model-coverage.csv)")
+    args = ap.parse_args(argv)
+
+    table = build(args)
+    _emit.show(table)
+    _emit.write_csv(table, args.csv)
+    write_tex(args.tex or _emit.tex_path(table.name),
+              table.rows, table.releases, table.day, table.note)
 
 
 if __name__ == "__main__":

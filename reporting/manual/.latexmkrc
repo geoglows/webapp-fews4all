@@ -15,10 +15,14 @@
 # the repo root fails to find content.tex and images/. Use `latexmk -cd` if you
 # must run it from elsewhere.
 
-# Everything generated goes in build/, so this folder holds only sources.
+# Everything generated goes in reporting/out/, beside the generated tables and
+# figures, so there is ONE generated directory in the whole tree and one line in
+# .gitignore covering it. This folder holds only sources.
+#
 # VS Code's latex-workshop.latex.outDir is set to match; if you change one,
-# change the other or the editor and the terminal will build to different places.
-$out_dir = 'build';
+# change the other or the editor and the terminal will build to different
+# places, and you will read a stale PDF without knowing which one it is.
+$out_dir = '../out/manual';
 
 # pdflatex, matching the TeX Live install on this machine. main.tex also builds
 # under xelatex (and tectonic) -- its preamble branches on \ifPDFTeX -- so this

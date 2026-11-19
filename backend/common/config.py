@@ -984,7 +984,13 @@ FLOOD_HUB_FILL_PREFIX = "from "
 # the defect is being raised with the GEOGLOWS team and a screenshot of the
 # region lit amber every day is the clearest statement of it. The box below is
 # the extent that was being blacked out; restore it by dropping the `None`.
-GEOGLOWS_BLACKOUT_BOX = None       # was (17.0, 57.0, 45.0, 71.0)
+# The extent the artifact occupies, kept as a named constant separate from the
+# switch below. The blackout is off, but the region still has to be MEASURED --
+# reporting/stats/blob_extent.py reports what it is doing each day --
+# and one definition keeps the thing measured and the thing that could be
+# suppressed from drifting apart.
+GEOGLOWS_ARTIFACT_BOX = (17.0, 57.0, 45.0, 71.0)   # west, south, east, north
+GEOGLOWS_BLACKOUT_BOX = None       # set to GEOGLOWS_ARTIFACT_BOX to suppress
 # A record of what was being flagged in there when the box went in, written by
 # static/build_suppression.py. NOTHING IN THE DAILY RUN READS THIS -- the box is
 # the rule. It exists so "what are we hiding?" has an answer that does not depend

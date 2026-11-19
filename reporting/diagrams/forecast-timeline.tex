@@ -1,0 +1,39 @@
+% The forecast timeline, from figures/forecast-timeline.mmd.
+%
+% The diagram itself is Mermaid; this file only places it and carries the
+% caption and label, so \ref{fig:forecast-timeline} resolves the same way it
+% did when the figure was drawn in TikZ.
+%
+% To regenerate after editing the .mmd:
+%   reporting/regenerate.sh timeline
+% or by hand, from this folder:
+%   npx -y @mermaid-js/mermaid-cli -i forecast-timeline.mmd \
+%       -o ../build/figures/forecast-timeline.pdf -b white --pdfFit
+% --pdfFit trims the page to the diagram. The output is vector, so it stays
+% sharp at any size; a PNG of this needs -s 4 (a scale factor -- mermaid sizes
+% the canvas to the diagram and ignores -w) just to print acceptably.
+%
+% The TikZ original is still here as forecast-timeline.tex. To go back, point
+% content.tex at it instead of at this file -- nothing else changes.
+%
+% The .pdf is found through \graphicspath in main.tex, which looks in
+% ../build/figures. Naming it without a path is what lets this wrapper be
+% \input from anywhere.
+\begin{figure}[htbp]
+\centering
+% Width knob: the .mmd sets the diagram's own proportions, this sets how
+% much of the text block it takes. Raise or lower the 0.85 to taste.
+\includegraphics[width=0.85\textwidth]{forecast-timeline.pdf}
+\caption[How each model reports a forecast day]{%
+  \textbf{What each model means by a forecast day.}
+  One column per forecast day, one row per model.
+  A \textbf{solid} block names the days it covers, so it earns those days a
+  place on the timeline. A \textbf{dashed} block covers days without naming
+  any: it is drawn on each of them, but cannot by itself make a day worth
+  stepping to. The Flood Hub block sits on days 5--6 purely as an
+  illustration: a published window is one to two days wide and can fall
+  anywhere in the first week, and which days it names depends on the gauge.
+  Colour here separates the models in the diagram only --- on the map they
+  share a palette and are told apart by the panel.}
+\label{fig:forecast-timeline}
+\end{figure}

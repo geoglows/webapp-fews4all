@@ -5,15 +5,26 @@ title: What each model means by a forecast day
 %% A SOLID block names the days it covers, so it earns those days a place on the
 %% timeline. A DASHED block covers days without naming any: it is drawn on each
 %% of them, but cannot by itself make a day worth stepping to.
-%% Colour separates the models here only. On the map they share a palette and
-%% are told apart by the side panel.
+%% One colour per model across every figure: GEOGLOWS orange (the same orange
+%% the application uses), Flood Hub blue, GloFAS green. On the map itself they
+%% share a palette and are told apart by the side panel, so this key belongs to
+%% the documentation, not the app.
 %% Edit the :N span after a block to move it; the spans in each row total 16.
-%% Render:  mmdc -i forecast-timeline.mmd -o forecast-timeline.svg -b white
-%% Without mmdc:  npx -y @mermaid-js/mermaid-cli -i forecast-timeline.mmd -o forecast-timeline.svg -b white
+%% Render:  reporting/regenerate.sh timeline
+%% By hand, from this folder, to where the manual looks for it:
+%%   mmdc -i forecast-timeline.mmd -o ../build/figures/forecast-timeline.pdf -b white --pdfFit
+%% Without mmdc, swap "mmdc" for "npx -y @mermaid-js/mermaid-cli".
+%% --pdfFit trims the page to the diagram. Output is vector, so it stays sharp
+%% at any size; for a PNG instead, swap the extension and add -s 4 (a scale
+%% factor -- mermaid sizes the canvas to the diagram and ignores -w).
+%% The widest cell in any row sets how wide the whole diagram is, so keep the
+%% long explanatory text in the caption, not in a block.
 %% NOTE one Mermaid quirk: a bare "%%" line is a parse error in block diagrams.
 %% Every comment line here must carry text after the percent signs.
 block-beta
   columns 16
+
+  axis["Forecast day - one column per day, 0 is today"]:16
 
   d0["0"] d1["1"] d2["2"] d3["3"] d4["4"] d5["5"] d6["6"] d7["7"]
   d8["8"] d9["9"] d10["10"] d11["11"] d12["12"] d13["13"] d14["14"] d15["15"]
@@ -27,7 +38,7 @@ block-beta
 
   space:5
   fhw["Flood Hub<br/>window"]:2
-  space:9
+  fhnote["window depends on gauge"]:9
 
   fhspan["Flood Hub gauge with no published window - covers every day, names none"]:16
 
@@ -35,17 +46,19 @@ block-beta
   flashx["flash floods never reach beyond tomorrow"]:14
 
   classDef axis fill:#F8FAFC,stroke:#CBD5E1,color:#475569
-  classDef geoc fill:#E0F2FE,stroke:#0284C7,color:#0C4A6E
-  classDef gloc fill:#CCFBF1,stroke:#0F766E,color:#134E4A
-  classDef fhc fill:#EDE9FE,stroke:#7C3AED,color:#4C1D95
+  classDef axislab fill:#FFFFFF,stroke:#FFFFFF,color:#475569
+  classDef geoc fill:#FFEDD5,stroke:#EA580C,color:#7C2D12
+  classDef gloc fill:#DCFCE7,stroke:#15803D,color:#14532D
+  classDef fhc fill:#DBEAFE,stroke:#2563EB,color:#1E3A8A
   classDef flsc fill:#FEE2E2,stroke:#DC2626,color:#7F1D1D
   classDef ghost fill:#FFFFFF,stroke:#CBD5E1,color:#64748B,stroke-dasharray:3 3
-  classDef span fill:#FAF8FF,stroke:#7C3AED,color:#4C1D95,stroke-dasharray:5 4
+  classDef span fill:#F5F8FF,stroke:#2563EB,color:#1E3A8A,stroke-dasharray:5 4
 
   class d0,d1,d2,d3,d4,d5,d6,d7,d8,d9,d10,d11,d12,d13,d14,d15 axis
+  class axis axislab
   class geo geoc
   class gf1,gf2,gf3 gloc
   class fhw fhc
   class flash flsc
-  class geox,flashx ghost
+  class geox,flashx,fhnote ghost
   class fhspan span

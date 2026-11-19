@@ -11,7 +11,7 @@
 \section*{Introduction}\label{introduction}
 \addcontentsline{toc}{section}{Introduction}
 
-The Flood Early Warning System for All (FEWS4All) is an application which combienes different river and flash flood forecasting models to highlight the likely locations of where a flood will occur.
+The Flood Early Warning System for All (FEWS4All) is an application which combines different river and flash flood forecasting models to highlight the likely locations of where a flood will occur.
 FEWS4All pools data from multiple flood forecasting models into shared attributes, such as severity, into one easy-to-read map.
 These attributes are used to flag any potential extreme flood event in an area, which can then be explored in the FEWS4All application.
 Because a flagged event may be predicted by a single model or corroborated by several, FEWS4All also conveys how much agreement stands behind each warning.
@@ -48,14 +48,21 @@ GloFAS & Copernicus Emergency Management Service (European Commission) & Global 
 Flood Hub & Google & AI gauge forecasts on published severity tiers, each gauge spread onto the river reach it stands on. Also supplies the flash-flood polygons. \\
 \end{longtable}
 
-GEOGLOWS over-reports flooding over one region, and those forecasts are drawn rather than hidden --- see \S3.5, \emph{A known gap: inflated GEOGLOWS return periods}, for what the artifact is and why it is left visible.
+GEOGLOWS over-reports flooding over one region, and those forecasts are drawn rather than hidden --- see \S\ref{withheld-geoglows}, \emph{A known gap: inflated GEOGLOWS return periods}, for what the artifact is and why it is left visible.
 
-What that means in practice is uneven. Table~\ref{tab:model-coverage} measures it on the delivered releases: GloFAS issues the overwhelming majority of river alerts, GEOGLOWS roughly a tenth of them, and Flood Hub a fraction of a percent, since it can only speak where a gauge stands.
-The severity mix differs in kind as well as in volume --- Flood Hub places close to half its alerts at danger, against well under a fifth for the other two, and has yet to issue an extreme one.
+What that means in practice is uneven. Table~\ref{tab:model-coverage} measures it on the delivered releases: GEOGLOWS and GloFAS each carry something between a third and two thirds of the river alerts issued for a given day, while Flood Hub contributes a fraction of a percent, since it can only speak where a gauge stands --- and on several of the days measured it issued no day-0 forecast at all, which the table notes beneath itself.
+The severity mix is steadier than the volumes: both of the large models place roughly four fifths of their alerts on the warning rung, and neither has put more than a sixteenth on extreme.
 The figures are ranges rather than averages because the spread is the point: a measure that barely moves across a week is a property of the system, while Flood Hub\textquotesingle s wide bands are a handful of alerts a day moving one at a time.
-Regenerate the table with \texttt{docs/user-manual/tables/model\_coverage.py}, which re-derives it from whatever releases are on disk.
+Regenerate the table with \texttt{reporting/stats/model\_coverage.py}, which re-derives it from whatever releases are on disk.
 
-\input{tables/model-coverage}
+\input{../out/tables/model-coverage}
+
+A week\textquotesingle s range says how steady that split is, not how it came to be.
+Figure~\ref{fig:coverage-trend} runs the same measure back to the first release the forecaster produced, and answers the other question.
+Two things in it are worth knowing before reading any of the coverage numbers: GEOGLOWS steps up roughly tenfold part way along, which is not weather but the step-2 correction described in \S\ref{how-each-model-reaches-the-grid}, and Flood Hub falls to nothing in the most recent releases, which is its own gauges publishing windows that begin after the day the map opens.
+Nothing drawn in the shaded band is comparable with what follows it.
+
+\input{../out/figures/coverage-trend}
 
 \subsection{Boundaries, Context, and Exposure Data}\label{boundaries-context-and-exposure-data}
 
@@ -309,7 +316,7 @@ Flood Hub publishes a window per gauge, usually one or two days wide, somewhere 
 Flash floods cover the next 24 hours.
 That window crosses midnight more often than not --- a warning issued at six in the evening runs to six tomorrow evening --- so they are drawn on today and tomorrow, and never further.
 
-\input{figures/forecast-timeline-mermaid}
+\input{../diagrams/forecast-timeline}
 
 A day earns a place on the bar only if some forecast \emph{names} it.
 That is the distinction the figure draws as solid against dashed: a GEOGLOWS step names its day, a GloFAS band names the days in its range, a Flood Hub window names the days it covers --- while a GloFAS pixel with no band, or a gauge that published no window, is drawn on every day without naming any of them.
@@ -415,8 +422,14 @@ Flood Hub --- flash & A polygon & Not gridded at all. The polygon keeps its own 
 
 \textbf{Two cells, one hexagon.} Both of the other models can put several forecasts in one cell, and each resolves it differently. GloFAS routinely lands two or three pixels in one hexagon, and the cell keeps the worst severity among them as a single forecast, rather than listing the same warning two and three times over. GEOGLOWS instead applies the river network\textquotesingle s own rules: reaches that meet, at a junction inside the cell or anywhere downstream, collapse to the one with the greater drainage area, since that is the trunk; two reaches of the same channel collapse to the upstream one; and reaches that never meet, having different outlets, are left alone, because no single statement about the hexagon could be true of both.
 
+\textbf{Once per day, not once per cell.} The network rule above asks which of two rivers speaks for a hexagon, and that question is only meaningful between forecasts for the same moment.
+GEOGLOWS publishes a row per reach per forecast day, so a reach flooding all week appears in its cell once for every day it floods; resolved on the cell alone it competes against itself, and all but one of those days is discarded.
+The rule therefore runs within a cell \emph{and} a forecast day.
+Until 13 November 2026 it did not, and a reach that flooded on every day of the horizon reached the map on the furthest-out day alone --- which cost roughly nine tenths of GEOGLOWS\textquotesingle s day-0 coverage and made the last tab of the timeline the busiest rather than the quietest.
+Figure~\ref{fig:coverage-trend} shows the size of that correction.
+
 Where a cell ends up holding more than one model, nothing is merged.
-Each model keeps its own forecast and its own row in the panel; what the map shows for that cell is the worst severity among them, and the cell counts as corroborated for the purposes of 3.5.
+Each model keeps its own forecast and its own row in the panel; what the map shows for that cell is the worst severity among them, and the cell counts as corroborated for the purposes of \S\ref{how-agreement-is-decided}.
 
 \subsection{How severity is decided}\label{how-severity-is-decided}
 
@@ -454,18 +467,27 @@ That rectangle was swallowing roughly \emph{half} of GEOGLOWS\textquotesingle s 
 A defect that is hidden is a defect nobody fixes, and the scale of this one is far easier to show than to describe --- a map of the region lit amber every day, in every release, is the argument.
 Leaving it visible also keeps the manual honest: the application no longer removes real forecasts along with the inflated ones, and no blunt rectangle stands in for a judgement about any particular river.
 
-The cost is that the region is wrong on the map rather than absent from it, and that GEOGLOWS\textquotesingle s share of the global totals in Table~\ref{tab:model-coverage} roughly doubles once those forecasts are counted.
+The cost is that the region is wrong on the map rather than absent from it, and that GEOGLOWS\textquotesingle s share of the global totals in Table~\ref{tab:model-coverage} rises substantially once those forecasts are counted.
 Both are the point.
 The suppression remains implemented, as a single extent in the pipeline configuration that is currently switched off; restoring it is a one-line change, and whenever it is on, every run records how many forecasts it withheld and the run log says so on every single run, so the state cannot quietly become permanent.
 
+Table~\ref{tab:blob-extent} is what that amounts to now the region is drawn rather than hidden.
+On the day the map opens, between a third and a half of every GEOGLOWS cell on earth sits inside that one rectangle, and almost all of it on the warning rung.
+Cells rather than forecasts, because a reach crosses several hexagons and it is the colouring that makes the region impossible to miss.
+The figures are a low--high range across the releases held, so a shrinking artifact can be told from a steady one; regenerate it with \texttt{reporting/stats/blob\_extent.py}.
+
+\input{../out/tables/blob-extent}
+
 The same defect is visible globally, and much more quietly.
 Table~\ref{tab:return-period-flow} pools every forecast day of the delivered releases and reads discharge against return period.
-If the climatology behind a return period is sound, a rarer event carries more water --- and for GEOGLOWS it does not: the median flow behind a 100-year forecast is 6.6\,m\textsuperscript{3}/s against 52.8 for a 2-year one, and three quarters of 100-year forecasts sit under 10\,m\textsuperscript{3}/s.
-The 100-year rung is also anomalously populated, carrying more forecasts than the 25- and 50-year rungs together.
-These are the same inflated return periods as the blackout above, thinly spread rather than concentrated in one rectangle, and because they land on the Extreme rung they are the loudest thing on the map.
-Flood Hub, whose thresholds are published rather than simulated, shows no such inversion.
+If the climatology behind a return period is sound, a rarer event carries more water.
+Read down the GEOGLOWS median and it falls instead: the 100-year rung carries a fraction of the water behind the 2-year one, and it is anomalously populated besides, holding several times the forecasts of the 25- and 50-year rungs together.
+These are the same inflated return periods as the artifact above, thinly spread rather than concentrated in one rectangle, and because they land on the Extreme rung they are the loudest thing on the map.
+Flood Hub, whose thresholds are published rather than simulated, reads the right way round across every rung it uses, which is what makes it the control rather than a second opinion.
+GloFAS is in the table to be counted rather than weighed: it publishes ensemble exceedance counts against its thresholds and no discharge at all, so every one of its forecasts carries an em dash where a flow would be.
+That absence is worth seeing on the page --- a substantial share of the alert volume reports no magnitude, which is why severity cannot be compared across the models on anything but the rung.
 
-\input{tables/return-period-flow}
+\input{../out/tables/return-period-flow}
 
 \subsection{How agreement is decided}\label{how-agreement-is-decided}
 
