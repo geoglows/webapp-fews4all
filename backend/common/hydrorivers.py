@@ -80,7 +80,7 @@ import sys
 from . import config as C
 from . import tables as T
 
-GAUGE_HYBAS = re.compile(r"^hybas[_-]?(\d+)$", re.I)
+GAUGE_HYBAS = re.compile(r"^(?:sub)?hybas[_-]?(\d+)$", re.I)
 
 
 class Network:
